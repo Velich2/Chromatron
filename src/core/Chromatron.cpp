@@ -143,7 +143,9 @@ std::vector<Tap> separationTaps(const Settings& s, double rs)
             Tap tap;
             tap.t = group + z * sigmaT;
             for (int c = 0; c < 3; ++c) tap.w[c] = g[c] == group ? weight : 0.0;
-            const double defocus = blurPx * std::min(1.0, std::fabs(tap.t));
+            // The same defocus for every channel: a fixed channel kept sharp next to blurred
+            // ones would turn edges magenta/green even with no separation at all.
+            const double defocus = blurPx;
             const double spacingPx = count == 1 ? 0.0 : 4.0 * sigmaT / count * halfDistPx;
             const double smooth = spacingPx > kMaxBandingPx * 0.5 ? 0.5 * spacingPx : 0.0;
             tap.sigma = std::sqrt(defocus * defocus + smooth * smooth);

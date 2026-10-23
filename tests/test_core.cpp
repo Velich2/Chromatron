@@ -148,6 +148,19 @@ void testIdentity()
     s.channelBlur = 0.0;
     expect(isIdentity(s), "zero separation reports identity");
     expect(maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) < 1e-6f, "zero separation renders identity");
+    // Channel blur alone must stay neutral in every pair (green fixed included).
+    s.channelBlur = 3.0;
+    for (int pair = 0; pair < 4; ++pair) {
+        s.pair = (ColorPair)pair;
+        const std::vector<float> out = runCpu(s, fullGeometry(f.w, f.h), f.px);
+        float chroma = 0.0f;
+        for (size_t i = 0; i < out.size(); i += 4)
+            chroma = std::fmax(chroma, std::fabs(out[i] - out[i + 1]) + std::fabs(out[i + 2] - out[i + 1]));
+        char what[96];
+        std::snprintf(what, sizeof(what), "zero separation with channel blur stays neutral, pair %d (%.2g)", pair,
+                      chroma);
+        expect(chroma < 1e-4f, what);
+    }
     s = aberration();
     s.mix = 0.0;
     expect(maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) == 0.0f, "mix 0 renders identity");
