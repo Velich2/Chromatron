@@ -27,29 +27,50 @@ if not defined AE_SDK_DIR (
 )
 echo After Effects SDK: %AE_SDK_DIR%
 
-rem --- Visual Studio environment (cl.exe, cmake) ---
-where cl >nul 2>nul
-if errorlevel 1 (
-    set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-    if not exist "!VSWHERE!" (
-        echo ERROR: Visual Studio 2022 with "Desktop development with C++" is required.
-        exit /b 1
-    )
-    for /f "usebackq delims=" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_PATH=%%i"
-    if not defined VS_PATH (
-        echo ERROR: no Visual Studio installation with the C++ toolset was found.
-        exit /b 1
-    )
-    call "!VS_PATH!\VC\Auxiliary\Build\vcvars64.bat" >nul
+rem --- Visual Studio: newest install with the C++ toolset (2022 = 17, 2026 = 18) ---
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+    echo ERROR: Visual Studio 2022 or newer with "Desktop development with C++" is required.
+    exit /b 1
 )
+set "VS_PATH="
+set "VS_VERSION="
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_PATH=%%i"
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion`) do set "VS_VERSION=%%i"
+if not defined VS_PATH (
+    echo ERROR: no Visual Studio installation with the C++ toolset was found.
+    exit /b 1
+)
+set "VS_MAJOR=%VS_VERSION:~0,2%"
+if "%VS_MAJOR%"=="17" (
+    set "GENERATOR=Visual Studio 17 2022"
+) else if "%VS_MAJOR%"=="18" (
+    set "GENERATOR=Visual Studio 18 2026"
+) else (
+    echo ERROR: unsupported Visual Studio version %VS_VERSION%.
+    exit /b 1
+)
+echo Visual Studio: %VS_PATH% [%GENERATOR%]
+
+where cl >nul 2>nul
+if errorlevel 1 call "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
 where cmake >nul 2>nul
 if errorlevel 1 (
     echo ERROR: cmake not found. Install CMake or the Visual Studio CMake component.
     exit /b 1
 )
 
+rem A build folder configured for another Visual Studio cannot be reused.
+if exist "%BUILD_DIR%\CMakeCache.txt" (
+    findstr /l /c:"CMAKE_GENERATOR:INTERNAL=%GENERATOR%" "%BUILD_DIR%\CMakeCache.txt" >nul
+    if errorlevel 1 (
+        echo Removing build folder configured for a different generator: %BUILD_DIR%
+        rmdir /s /q "%BUILD_DIR%"
+    )
+)
+
 rem --- Configure, build, test ---
-cmake -S "%~dp0." -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 ^
+cmake -S "%~dp0." -B "%BUILD_DIR%" -G "%GENERATOR%" -A x64 ^
     -DCHROMATRON_BUILD_AE=ON -DAE_SDK_DIR="%AE_SDK_DIR%"
 if errorlevel 1 exit /b 1
 
