@@ -7,6 +7,7 @@
 
 #import <Metal/Metal.h>
 
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -151,7 +152,34 @@ public:
         if (cmd_.error) throw std::runtime_error(std::string("Metal: ") + cmd_.error.localizedDescription.UTF8String);
     }
 
+    // Host buffers may be private, so copies go through a shared staging buffer.
+    void download(const void* buffer, void* host, size_t bytes) override
+    {
+        id<MTLBuffer> staging = [device_ newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+        if (!staging) throw std::runtime_error("Metal: out of memory");
+        blit(B(buffer), staging, bytes);
+        std::memcpy(host, staging.contents, bytes);
+    }
+
+    void upload(const void* host, void* buffer, size_t bytes) override
+    {
+        id<MTLBuffer> staging = [device_ newBufferWithBytes:host length:bytes options:MTLResourceStorageModeShared];
+        if (!staging) throw std::runtime_error("Metal: out of memory");
+        blit(staging, B(buffer), bytes);
+    }
+
 private:
+    void blit(id<MTLBuffer> from, id<MTLBuffer> to, size_t bytes)
+    {
+        id<MTLCommandBuffer> cmd = [queue_ commandBuffer];
+        id<MTLBlitCommandEncoder> enc = [cmd blitCommandEncoder];
+        [enc copyFromBuffer:from sourceOffset:0 toBuffer:to destinationOffset:0 size:bytes];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        if (cmd.error) throw std::runtime_error(std::string("Metal: ") + cmd.error.localizedDescription.UTF8String);
+    }
+
     void dispatch(id<MTLComputePipelineState> state, int w, int h, void (^bind)(id<MTLComputeCommandEncoder>))
     {
         if (w <= 0 || h <= 0) return;

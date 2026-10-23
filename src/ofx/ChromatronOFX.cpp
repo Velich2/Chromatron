@@ -39,6 +39,7 @@ const char* const kShowMask = "showMask";
 const char* const kBlur = "channelBlur";
 const char* const kSamples = "samples";
 const char* const kMix = "mix";
+const char* const kUseGpu = "useGpu";
 
 class ChromatronPlugin : public ImageEffect {
 public:
@@ -61,6 +62,7 @@ public:
         blur_ = fetchDoubleParam(kBlur);
         samples_ = fetchIntParam(kSamples);
         mix_ = fetchDoubleParam(kMix);
+        useGpu_ = fetchBooleanParam(kUseGpu);
         updateEnabled();
     }
 
@@ -154,6 +156,7 @@ private:
     DoubleParam* blur_ = nullptr;
     IntParam* samples_ = nullptr;
     DoubleParam* mix_ = nullptr;
+    BooleanParam* useGpu_ = nullptr;
 };
 
 void ChromatronPlugin::render(const RenderArguments& args)
@@ -197,7 +200,16 @@ void ChromatronPlugin::render(const RenderArguments& args)
 
     try {
         std::unique_ptr<cx::Backend> backend = backendFor(args);
-        cx::render(*backend, cx::buildPlan(settingsAt(args.time), g), src->getPixelData(), dst->getPixelData());
+        const cx::Plan plan = cx::buildPlan(settingsAt(args.time), g);
+        const bool gpuImages = args.isEnabledCudaRender || args.isEnabledOpenCLRender || args.isEnabledMetalRender;
+        if (gpuImages && !useGpu_->getValue()) {
+            // The host decides where images live; "Use GPU" off copies them through host memory.
+            const size_t srcBytes = (size_t)src->getRowBytes() * (size_t)(sb.y2 - sb.y1);
+            const size_t dstBytes = (size_t)dst->getRowBytes() * (size_t)(db.y2 - db.y1);
+            cx::renderOnHost(*backend, plan, src->getPixelData(), srcBytes, dst->getPixelData(), dstBytes);
+        } else {
+            cx::render(*backend, plan, src->getPixelData(), dst->getPixelData());
+        }
     } catch (const std::exception& e) {
         setPersistentMessage(Message::eMessageError, "", std::string("Chromatron: ") + e.what());
         throwSuiteStatusException(kOfxStatFailed);
@@ -283,25 +295,6 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     mode->setDefault(1);
     page->addChild(*mode);
 
-    ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
-    space->setLabels("Color Space", "Color Space", "Color Space");
-    space->setHint("Encoding of the timeline / clip. The optics run on linear light; ACES inputs are processed "
-                   "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
-                   "DaVinci Wide Gamut / Intermediate.");
-    space->appendOption("Linear (Rec.709 primaries)");
-    space->appendOption("sRGB");
-    space->appendOption("Rec.709 Gamma 2.4 (BT.1886)");
-    space->appendOption("ACEScg");
-    space->appendOption("ACEScct");
-    space->appendOption("ACEScc");
-    space->appendOption("ACES2065-1 (AP0)");
-    space->appendOption("DaVinci Wide Gamut / Intermediate");
-    space->appendOption("DaVinci Wide Gamut (linear)");
-    space->appendOption("Rec.709 (Scene)");
-    space->setDefault((int)cx::ColorSpace::Rec709Gamma24);
-    space->setAnimates(false);
-    page->addChild(*space);
-
     GroupParamDescriptor* sep = defineGroup(desc, "separationGroup", "RGB Separation", page);
     ChoiceParamDescriptor* pair = desc.defineChoiceParam(kPair);
     pair->setLabels("Color Pair", "Color Pair", "Color Pair");
@@ -342,7 +335,8 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                  abr, page);
     BooleanParamDescriptor* showMask = desc.defineBooleanParam(kShowMask);
     showMask->setLabels("Show Mask", "Show Mask", "Show Mask");
-    showMask->setHint("Display where the aberration is applied.");
+    showMask->setHint("Display the strength of the aberration: black = none, white = full (threshold, mix and "
+                      "distance from the optical center).");
     showMask->setDefault(false);
     showMask->setParent(*abr);
     page->addChild(*showMask);
@@ -359,6 +353,32 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     samples->setParent(*optics);
     page->addChild(*samples);
     defineDouble(desc, kMix, "Mix", "Blend with the original.", 1.0, 0.0, 1.0, 0.0, 1.0, optics, page);
+
+    BooleanParamDescriptor* useGpu = desc.defineBooleanParam(kUseGpu);
+    useGpu->setLabels("Use GPU", "Use GPU", "Use GPU");
+    useGpu->setHint("Render on the GPU when the host provides one. Off: render on the CPU.");
+    useGpu->setDefault(true);
+    useGpu->setAnimates(false);
+    page->addChild(*useGpu);
+
+    ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
+    space->setLabels("Color Space", "Color Space", "Color Space");
+    space->setHint("Encoding of the timeline / clip. The optics run on linear light; ACES inputs are processed "
+                   "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
+                   "DaVinci Wide Gamut / Intermediate.");
+    space->appendOption("Linear (Rec.709 primaries)");
+    space->appendOption("sRGB");
+    space->appendOption("Rec.709 Gamma 2.4 (BT.1886)");
+    space->appendOption("ACEScg");
+    space->appendOption("ACEScct");
+    space->appendOption("ACEScc");
+    space->appendOption("ACES2065-1 (AP0)");
+    space->appendOption("DaVinci Wide Gamut / Intermediate");
+    space->appendOption("DaVinci Wide Gamut (linear)");
+    space->appendOption("Rec.709 (Scene)");
+    space->setDefault((int)cx::ColorSpace::Rec709Gamma24);
+    space->setAnimates(false);
+    page->addChild(*space);
 }
 
 ImageEffect* ChromatronFactory::createInstance(OfxImageEffectHandle handle, ContextEnum)

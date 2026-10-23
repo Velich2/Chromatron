@@ -447,20 +447,7 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
 
     float m = 1.0f;
     if (p.useMask) m = mask[cy * p.srcWidth + cx];
-    if (p.showMask) {
-        CKPix v;
-        v.r = m;
-        v.g = m;
-        v.b = m;
-        v.a = 1.0f;
-        ck_write(p, dst, x, y, v);
-        return;
-    }
     m *= p.mix;
-    if (m <= 0.0f) {
-        ck_store(p, dst, x, y, orig);
-        return;
-    }
 
     const float fx = (float)wx;
     const float fy = (float)wy;
@@ -470,6 +457,20 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         const float dx = fx - p.centerX;
         const float dy = fy - p.centerY;
         field = ck_fminf(1.0f, ck_sqrtf(dx * dx + dy * dy) * p.invHalfDiagonal);
+    }
+    if (p.showMask) {
+        // Strength of the effect: threshold mask x mix x distance from the optical centre.
+        CKPix v;
+        v.r = m * field;
+        v.g = v.r;
+        v.b = v.r;
+        v.a = 1.0f;
+        ck_write(p, dst, x, y, v);
+        return;
+    }
+    if (m <= 0.0f) {
+        ck_store(p, dst, x, y, orig);
+        return;
     }
     float r = 0.0f, g = 0.0f, b = 0.0f;
     float ar = 0.0f, ag = 0.0f, ab = 0.0f;

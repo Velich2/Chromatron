@@ -140,6 +140,19 @@ public:
 
     void finish() override { check(clFinish(queue_), "clFinish"); }
 
+    void download(const void* buffer, void* host, size_t bytes) override
+    {
+        check(clEnqueueReadBuffer(queue_, static_cast<cl_mem>(const_cast<void*>(buffer)), CL_TRUE, 0, bytes, host, 0,
+                                  nullptr, nullptr),
+              "clEnqueueReadBuffer");
+    }
+
+    void upload(const void* host, void* buffer, size_t bytes) override
+    {
+        check(clEnqueueWriteBuffer(queue_, static_cast<cl_mem>(buffer), CL_TRUE, 0, bytes, host, 0, nullptr, nullptr),
+              "clEnqueueWriteBuffer");
+    }
+
 private:
     enum { kImport, kLuma, kBlur, kContrast, kGather, kCount };
 

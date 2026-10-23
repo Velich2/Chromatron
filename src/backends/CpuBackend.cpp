@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 #include <thread>
 #include <vector>
@@ -85,6 +86,9 @@ public:
                 ck_gather(x, y, p, F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(mask), F(dst));
         });
     }
+
+    void download(const void* buffer, void* host, size_t bytes) override { std::memcpy(host, buffer, bytes); }
+    void upload(const void* host, void* buffer, size_t bytes) override { std::memcpy(buffer, host, bytes); }
 };
 
 }  // namespace

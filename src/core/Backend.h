@@ -35,6 +35,11 @@ public:
 
     // Blocks until submitted work has finished (tools and tests; plug-ins never wait).
     virtual void finish() {}
+
+    // Blocking copies between a buffer of this backend and host memory, ordered after
+    // work already queued. Used to run the CPU path on images the host keeps on the GPU.
+    virtual void download(const void* buffer, void* host, size_t bytes) = 0;
+    virtual void upload(const void* host, void* buffer, size_t bytes) = 0;
 };
 
 std::unique_ptr<Backend> makeCpuBackend();

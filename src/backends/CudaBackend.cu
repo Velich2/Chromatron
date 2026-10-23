@@ -105,6 +105,18 @@ public:
 
     void finish() override { check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize"); }
 
+    void download(const void* buffer, void* host, size_t bytes) override
+    {
+        check(cudaMemcpyAsync(host, buffer, bytes, cudaMemcpyDeviceToHost, stream_), "cudaMemcpyAsync");
+        finish();
+    }
+
+    void upload(const void* host, void* buffer, size_t bytes) override
+    {
+        check(cudaMemcpyAsync(buffer, host, bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync");
+        finish();
+    }
+
 private:
     static dim3 block() { return dim3(16, 16); }
     static dim3 grid(int w, int h) { return dim3((unsigned)(w + 15) / 16, (unsigned)(h + 15) / 16); }

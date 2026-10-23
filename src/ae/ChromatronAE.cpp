@@ -31,7 +31,6 @@ constexpr int kMajor = 1, kMinor = 0, kBug = 0, kBuild = 1;
 enum {
     P_INPUT = 0,
     P_MODE,
-    P_SPACE,
     P_SEP_START,
     P_PAIR,
     P_ANGLE,
@@ -51,6 +50,8 @@ enum {
     P_SAMPLES,
     P_MIX,
     P_OPTICS_END,
+    P_USE_GPU,
+    P_SPACE,
     P_NUM_PARAMS
 };
 
@@ -76,7 +77,8 @@ enum {
     ID_SAMPLES,
     ID_MIX,
     ID_OPTICS_END,
-    ID_SPACE
+    ID_SPACE,
+    ID_USE_GPU
 };
 
 // Scoped PICA suite acquisition.
@@ -156,11 +158,6 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_POPUP("Mode", 2, 2, "RGB Separation|Lens Aberration", ID_MODE);
-    AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Space", 10, 2,
-                 "Linear (Rec.709 primaries)|sRGB|Rec.709 Gamma 2.4 (BT.1886)|ACEScg|ACEScct|ACEScc|"
-                 "ACES2065-1 (AP0)|DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)|Rec.709 (Scene)",
-                 ID_SPACE);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("RGB Separation", ID_SEP_START);
@@ -203,6 +200,14 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_OPTICS_END);
 
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_CHECKBOXX("Use GPU", TRUE, 0, ID_USE_GPU);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POPUP("Color Space", 10, 2,
+                 "Linear (Rec.709 primaries)|sRGB|Rec.709 Gamma 2.4 (BT.1886)|ACEScg|ACEScct|ACEScc|"
+                 "ACES2065-1 (AP0)|DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)|Rec.709 (Scene)",
+                 ID_SPACE);
+
     out->num_params = P_NUM_PARAMS;
     return err;
 }
@@ -231,6 +236,7 @@ struct Inputs {
     cx::Settings settings;
     double centerX = 0.0;  // optical centre, full-resolution layer pixels
     double centerY = 0.0;
+    bool useGpu = true;
 };
 
 PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
@@ -264,6 +270,7 @@ PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
     get(P_BLUR, [&](PF_ParamDef& d) { s.channelBlur = d.u.fs_d.value; });
     get(P_SAMPLES, [&](PF_ParamDef& d) { s.samples = (int)d.u.sd.value; });
     get(P_MIX, [&](PF_ParamDef& d) { s.mix = d.u.fs_d.value; });
+    get(P_USE_GPU, [&](PF_ParamDef& d) { out.useGpu = d.u.bd.value != 0; });
     return err;
 }
 
@@ -301,7 +308,8 @@ PF_Err SmartPreRender(PF_InData* in_data, PF_OutData*, PF_PreRenderExtra* extra)
     extra->output->result_rect = out;
     extra->output->max_result_rect = layer;
     extra->output->solid = FALSE;
-    if (extra->input->what_gpu != PF_GPU_Framework_NONE && gpuFrameworkBuilt(extra->input->what_gpu))
+    // Without this flag AE renders the frame on the CPU (Smart Render instead of Smart Render GPU).
+    if (inputs.useGpu && extra->input->what_gpu != PF_GPU_Framework_NONE && gpuFrameworkBuilt(extra->input->what_gpu))
         extra->output->flags |= PF_RenderOutputFlag_GPU_RENDER_POSSIBLE;
     return err;
 }

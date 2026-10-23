@@ -401,4 +401,15 @@ void render(Backend& be, const Plan& plan, const void* src, void* dst)
     be.submit();
 }
 
+void renderOnHost(Backend& device, const Plan& plan, const void* src, size_t srcBytes, void* dst, size_t dstBytes)
+{
+    std::vector<float> hostSrc((srcBytes + sizeof(float) - 1) / sizeof(float));
+    std::vector<float> hostDst((dstBytes + sizeof(float) - 1) / sizeof(float));
+    device.download(src, hostSrc.data(), srcBytes);
+    device.download(dst, hostDst.data(), dstBytes);
+    std::unique_ptr<Backend> cpu = makeCpuBackend();
+    render(*cpu, plan, hostSrc.data(), hostDst.data());
+    device.upload(hostDst.data(), dst, dstBytes);
+}
+
 }  // namespace chromatron

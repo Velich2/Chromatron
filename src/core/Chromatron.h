@@ -91,4 +91,8 @@ double sampleMargin(const Settings& s, double renderScale);
 // Runs all passes for one frame. src/dst are handles of the backend's buffer type.
 void render(Backend& backend, const Plan& plan, const void* src, void* dst);
 
+// Renders on the CPU images that live in `device` buffers (GPU disabled by the user while the
+// host still hands over GPU memory). dst is read back first so pixels outside the region survive.
+void renderOnHost(Backend& device, const Plan& plan, const void* src, size_t srcBytes, void* dst, size_t dstBytes);
+
 }  // namespace chromatron

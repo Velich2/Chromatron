@@ -178,6 +178,30 @@ void testNoMagentaGreen()
     }
 }
 
+// Show Mask displays the effect strength: dark at the optical centre, bright in the corners,
+// and dark away from strong edges once a threshold is set (never a plain white frame).
+void testShowMask()
+{
+    const Frame f = neutralChart(96, 64);
+    const Geometry g = fullGeometry(f.w, f.h);
+    Settings s = aberration();
+    s.threshold = 0.0;
+    s.showMask = true;
+    std::vector<float> out = runCpu(s, g, f.px);
+    auto at = [&](int x, int y) { return out[((size_t)y * f.w + x) * 4]; };
+    expect(at(f.w / 2, f.h / 2) < 0.05f && at(0, 0) > 0.95f && at(f.w - 1, f.h - 1) > 0.95f,
+           "show mask without threshold: black at the centre, white in the corners");
+
+    s.threshold = 0.6;
+    out = runCpu(s, g, f.px);
+    float lo = 1.0f, hi = 0.0f;
+    for (size_t i = 0; i < out.size(); i += 4) {
+        lo = std::fmin(lo, out[i]);
+        hi = std::fmax(hi, out[i]);
+    }
+    expect(lo < 0.05f && hi > 0.3f, "show mask with threshold: edges only");
+}
+
 void testRegionAndOrder()
 {
     const Frame f = neutralChart(64, 48);
@@ -365,6 +389,12 @@ void testOpenCL()
             char what[96];
             std::snprintf(what, sizeof(what), "OpenCL matches CPU, mode %d (max diff %.2g)", mode, d);
             expect(d < 2e-3f, what);
+
+            // "Use GPU" off: OpenCL images rendered on the CPU through host memory.
+            renderOnHost(*be, buildPlan(s, g), src, bytes, dst, bytes);
+            be->download(dst, out.data(), bytes);
+            std::snprintf(what, sizeof(what), "OpenCL images rendered on the CPU, mode %d", mode);
+            expect(maxDiff(ref, out) == 0.0f, what);
         } catch (const std::exception& e) {
             std::printf("%s\n", e.what());
             expect(false, "OpenCL backend runs");
@@ -419,6 +449,7 @@ int main()
     testFlatField();
     testIdentity();
     testNoMagentaGreen();
+    testShowMask();
     testRegionAndOrder();
     testTransfers();
     testAces();
