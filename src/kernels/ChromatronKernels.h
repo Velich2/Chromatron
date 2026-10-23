@@ -63,6 +63,7 @@ typedef struct CKParams {
     int cleanFringe;  // remove the magenta/green component from the dispersion
     int transfer;     // CK_TRANSFER_* of the host image
     int useMatrix;    // host primaries differ from the working primaries
+    int premultiplied; // host RGB is associated with alpha: (de|en)code the colour, not RGB*alpha
     float lumR;       // luminance weights of the working primaries
     float lumG;
     float lumB;
@@ -291,9 +292,18 @@ CK_FN void ck_import(int x, int y, CK_PARAMS p, CK_G const float* src, CK_G floa
 {
     const int s = y * p.srcPitch + x * 4;
     const int d = (y * p.srcWidth + x) * 4;
-    float r = ck_decode(p.transfer, src[s + ck_chan(p.srcOrder, 0)]);
-    float g = ck_decode(p.transfer, src[s + ck_chan(p.srcOrder, 1)]);
-    float b = ck_decode(p.transfer, src[s + ck_chan(p.srcOrder, 2)]);
+    const float a = src[s + ck_chan(p.srcOrder, 3)];
+    float r = src[s + ck_chan(p.srcOrder, 0)];
+    float g = src[s + ck_chan(p.srcOrder, 1)];
+    float b = src[s + ck_chan(p.srcOrder, 2)];
+    // Premultiplied input: the transfer curve applies to the colour, so divide alpha out
+    // first and associate again in linear light (otherwise soft edges get dark halos).
+    const bool assoc = p.premultiplied && p.transfer != CK_TRANSFER_LINEAR && a > 1e-6f;
+    const float ia = assoc ? 1.0f / a : 1.0f;
+    const float ka = assoc ? a : 1.0f;
+    r = ck_decode(p.transfer, r * ia) * ka;
+    g = ck_decode(p.transfer, g * ia) * ka;
+    b = ck_decode(p.transfer, b * ia) * ka;
     if (p.useMatrix) {
         const float wr = p.toWork[0] * r + p.toWork[1] * g + p.toWork[2] * b;
         const float wg = p.toWork[3] * r + p.toWork[4] * g + p.toWork[5] * b;
@@ -305,7 +315,7 @@ CK_FN void ck_import(int x, int y, CK_PARAMS p, CK_G const float* src, CK_G floa
     work[d + 0] = r;
     work[d + 1] = g;
     work[d + 2] = b;
-    work[d + 3] = src[s + ck_chan(p.srcOrder, 3)];
+    work[d + 3] = a;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,9 +439,12 @@ CK_FN void ck_store(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix v)
         v.g = g;
         v.b = b;
     }
-    v.r = ck_encode(p.transfer, v.r);
-    v.g = ck_encode(p.transfer, v.g);
-    v.b = ck_encode(p.transfer, v.b);
+    const bool assoc = p.premultiplied && p.transfer != CK_TRANSFER_LINEAR && v.a > 1e-6f;
+    const float ia = assoc ? 1.0f / v.a : 1.0f;
+    const float ka = assoc ? v.a : 1.0f;
+    v.r = ck_encode(p.transfer, v.r * ia) * ka;
+    v.g = ck_encode(p.transfer, v.g * ia) * ka;
+    v.b = ck_encode(p.transfer, v.b * ia) * ka;
     ck_write(p, dst, x, y, v);
 }
 

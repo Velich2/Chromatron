@@ -197,6 +197,7 @@ void ChromatronPlugin::render(const RenderArguments& args)
     g.centerX = fx1 + cxn * (fx2 - fx1) - sb.x1 - 0.5;
     g.centerY = fy1 + cyn * (fy2 - fy1) - sb.y1 - 0.5;
     g.halfDiagonal = 0.5 * std::hypot(fx2 - fx1, fy2 - fy1);
+    g.premultiplied = src_->getPreMultiplication() == eImagePreMultiplied;
 
     try {
         std::unique_ptr<cx::Backend> backend = backendFor(args);

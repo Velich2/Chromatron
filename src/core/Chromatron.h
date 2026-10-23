@@ -70,6 +70,7 @@ struct Geometry {
     double centerX = 0.0;      // optical centre, source pixels
     double centerY = 0.0;
     double halfDiagonal = 1.0; // frame half-diagonal, source pixels
+    bool premultiplied = false; // RGB is associated with alpha (After Effects, premultiplied OFX clips)
 };
 
 struct Plan {

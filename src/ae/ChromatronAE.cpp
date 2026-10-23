@@ -328,8 +328,10 @@ cx::Geometry MakeGeometry(PF_InData* in_data, const Inputs& inputs, const PF_Eff
     g.dstOffsetY = dst->origin_y - src->origin_y;
     g.renderScale = ds;
     // Point values are full-resolution layer coordinates of pixel corners.
-    g.centerX = inputs.centerX * ds - src->origin_x - 0.5;
-    g.centerY = inputs.centerY * downsampleY(in_data) - src->origin_y - 0.5;
+    // AE already scales point parameters for the current downsample factor.
+    g.centerX = inputs.centerX - src->origin_x - 0.5;
+    g.centerY = inputs.centerY - src->origin_y - 0.5;
+    g.premultiplied = true;  // AE layers are premultiplied
     g.halfDiagonal = 0.5 * std::hypot(in_data->width * ds, in_data->height * downsampleY(in_data));
     return g;
 }

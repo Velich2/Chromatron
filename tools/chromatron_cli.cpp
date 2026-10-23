@@ -98,6 +98,7 @@ Image readImage(const std::string& path)
                 std::swap(b[1], b[2]);
             }
         }
+        for (float& f : raw) f *= std::fabs(scale);  // |scale| is the PFM exposure factor
         img.px.resize((size_t)img.w * img.h * 4);
         for (int y = 0; y < img.h; ++y)  // PFM rows are bottom-up
             for (int x = 0; x < img.w; ++x) {

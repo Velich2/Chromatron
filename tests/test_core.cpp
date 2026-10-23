@@ -388,6 +388,46 @@ void testDaVinciWideGamut()
            "DaVinci Wide Gamut flat field round-trips through AP1");
 }
 
+// Premultiplied soft edge in an encoded space: white stays white at every coverage, i.e.
+// encoded RGB equals alpha (decoding RGB*alpha directly would darken the edge).
+void testPremultipliedEdge(bool premultiplied)
+{
+    const Frame f = makeFrame(64, 16, [](int x, int, float* px) {
+        const float a = x < 32 ? 0.0f : 1.0f;
+        px[0] = px[1] = px[2] = px[3] = a;
+    });
+    Settings s;
+    s.mode = Mode::Separation;
+    s.distance = 0.0;
+    s.channelBlur = 4.0;
+    s.mix = 1.0;
+    s.space = ColorSpace::SRGB;
+    Geometry g = fullGeometry(f.w, f.h);
+    g.premultiplied = premultiplied;
+    const std::vector<float> out = runCpu(s, g, f.px);
+    float worst = 0.0f, softest = 1.0f;
+    for (size_t i = 0; i < out.size(); i += 4) {
+        for (int c = 0; c < 3; ++c) worst = std::fmax(worst, std::fabs(out[i + c] - out[i + 3]));
+        softest = std::fmin(softest, std::fabs(out[i + 3] - 0.5f));
+    }
+    char what[96];
+    std::snprintf(what, sizeof(what), "premultiplied soft edge keeps white colour (%.2g)", worst);
+    expect(worst < 1e-4f && softest < 0.1f, what);
+}
+
+// Lateral far larger than the frame must not reach the 1 / (1 + t * k) pole.
+void testRadialPole()
+{
+    const Frame f = neutralChart(128, 128);
+    Settings s = aberration();
+    s.lateral = -500.0;
+    s.channelBlur = 0.0;
+    const std::vector<float> out = runCpu(s, fullGeometry(f.w, f.h), f.px);
+    bool finite = true;
+    for (float v : out) finite = finite && std::isfinite(v) && v > -1.0f && v < 10.0f;
+    expect(finite, "huge Lateral on a small frame stays finite");
+}
+
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
@@ -498,6 +538,8 @@ int main()
     testColorSpaceMatters();
     testAces();
     testDaVinciWideGamut();
+    testPremultipliedEdge(true);
+    testRadialPole();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
 #endif

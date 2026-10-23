@@ -289,6 +289,7 @@ Plan buildPlan(const Settings& s, const Geometry& g)
     p.dstOffsetX = g.dstOffsetX;
     p.dstOffsetY = g.dstOffsetY;
     p.mix = (float)std::max(0.0, std::min(1.0, s.mix));
+    p.premultiplied = g.premultiplied ? 1 : 0;
     setupColorSpace(p, s.space);
     const double lum[3] = {p.lumR, p.lumG, p.lumB};
 
@@ -305,7 +306,9 @@ Plan buildPlan(const Settings& s, const Geometry& g)
         const double hd = std::max(1.0, g.halfDiagonal);
         p.centerX = (float)g.centerX;
         p.centerY = (float)g.centerY;
-        p.radialScale = (float)(s.lateral * rs / hd);
+        // Taps sit within |t| < 1, so |radialScale| <= 0.5 keeps the per-tap magnification
+        // 1 + t * radialScale >= 0.5, far from the pole at 0 (Lateral can exceed a tiny frame).
+        p.radialScale = (float)std::max(-0.5, std::min(0.5, s.lateral * rs / hd));
         p.invHalfDiagonal = (float)(1.0 / hd);
         taps = aberrationTaps(s, rs, lum);
         setupFringeCleaning(p, s.balance, workInAP1(s.space));
