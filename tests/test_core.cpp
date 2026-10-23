@@ -178,28 +178,36 @@ void testNoMagentaGreen()
     }
 }
 
-// Show Mask displays the effect strength: dark at the optical centre, bright in the corners,
-// and dark away from strong edges once a threshold is set (never a plain white frame).
+// Show Mask displays where fringes actually appear: on the picture's edges, never on flat
+// areas or at the optical centre, and fewer edges once a threshold is set.
 void testShowMask()
 {
-    const Frame f = neutralChart(96, 64);
+    // Vertical bars on the left half, flat grey on the right half.
+    const Frame f = makeFrame(128, 64, [](int x, int, float* p) {
+        p[0] = p[1] = p[2] = x < 64 && (x / 8) % 2 == 0 ? 0.9f : 0.05f;
+        p[3] = 1.0f;
+    });
     const Geometry g = fullGeometry(f.w, f.h);
     Settings s = aberration();
-    s.threshold = 0.0;
     s.showMask = true;
-    std::vector<float> out = runCpu(s, g, f.px);
-    auto at = [&](int x, int y) { return out[((size_t)y * f.w + x) * 4]; };
-    expect(at(f.w / 2, f.h / 2) < 0.05f && at(0, 0) > 0.95f && at(f.w - 1, f.h - 1) > 0.95f,
-           "show mask without threshold: black at the centre, white in the corners");
+    auto band = [&](const std::vector<float>& out, int x0, int x1) {
+        float m = 0.0f;
+        for (int y = 0; y < f.h; ++y)
+            for (int x = x0; x < x1; ++x) m = std::fmax(m, out[((size_t)y * f.w + x) * 4]);
+        return m;
+    };
+    const std::vector<float> all = runCpu(s, g, f.px);
+    expect(band(all, 0, 40) > 0.5f && band(all, 72, 128) < 0.01f,
+           "show mask: bright on edges towards the frame edge, black on flat areas");
 
-    s.threshold = 0.6;
-    out = runCpu(s, g, f.px);
-    float lo = 1.0f, hi = 0.0f;
-    for (size_t i = 0; i < out.size(); i += 4) {
-        lo = std::fmin(lo, out[i]);
-        hi = std::fmax(hi, out[i]);
+    s.threshold = 0.9;
+    const std::vector<float> strong = runCpu(s, g, f.px);
+    float sumAll = 0.0f, sumStrong = 0.0f;
+    for (size_t i = 0; i < all.size(); i += 4) {
+        sumAll += all[i];
+        sumStrong += strong[i];
     }
-    expect(lo < 0.05f && hi > 0.3f, "show mask with threshold: edges only");
+    expect(sumStrong < 0.9f * sumAll, "show mask: a threshold removes weaker edges");
 }
 
 void testRegionAndOrder()

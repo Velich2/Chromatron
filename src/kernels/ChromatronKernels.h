@@ -312,12 +312,17 @@ CK_FN void ck_import(int x, int y, CK_PARAMS p, CK_G const float* src, CK_G floa
 // Pass 2 (mask): tone-compressed luminance, so HDR highlights count as "bright"
 // without letting a single super-white pixel dominate the contrast measure.
 // ---------------------------------------------------------------------------
+// Tone compression shared by the mask passes: 1.0 at diffuse white, 1.5 at extreme highlights.
+CK_FN float ck_tone(float v)
+{
+    v = ck_fmaxf(0.0f, v);
+    return 1.5f * v / (0.5f + v);
+}
+
 CK_FN void ck_luma(int x, int y, CK_PARAMS p, CK_G const float* work, CK_G float* luma)
 {
     const int i = y * p.srcWidth + x;
-    const float yv = ck_fmaxf(0.0f, p.lumR * work[i * 4 + 0] + p.lumG * work[i * 4 + 1] +
-                                        p.lumB * work[i * 4 + 2]);
-    luma[i] = 1.5f * yv / (0.5f + yv);
+    luma[i] = ck_tone(p.lumR * work[i * 4 + 0] + p.lumG * work[i * 4 + 1] + p.lumB * work[i * 4 + 2]);
 }
 
 // Index of the sample i pixels away along the pass direction (clamp-to-edge).
@@ -430,6 +435,22 @@ CK_FN void ck_store(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix v)
     ck_write(p, dst, x, y, v);
 }
 
+// Mask view: how much the effect changes this pixel (black = untouched, white = strong
+// fringe). It follows the picture's edges and already includes the threshold, mix and
+// the growth from the optical centre to the corners.
+CK_FN void ck_mask_view(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix orig, CKPix out)
+{
+    const float d = ck_fmaxf(ck_fabsf(ck_tone(out.r) - ck_tone(orig.r)),
+                             ck_fmaxf(ck_fabsf(ck_tone(out.g) - ck_tone(orig.g)),
+                                      ck_fabsf(ck_tone(out.b) - ck_tone(orig.b))));
+    CKPix v;
+    v.r = ck_clampf(4.0f * d, 0.0f, 1.0f);
+    v.g = v.r;
+    v.b = v.r;
+    v.a = 1.0f;
+    ck_write(p, dst, x, y, v);
+}
+
 // ---------------------------------------------------------------------------
 // Pass 4: spectral gather. Each tap is one wavelength (aberration) or one slice
 // of a channel group (separation): it samples the source displaced by t, from a
@@ -458,18 +479,9 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         const float dy = fy - p.centerY;
         field = ck_fminf(1.0f, ck_sqrtf(dx * dx + dy * dy) * p.invHalfDiagonal);
     }
-    if (p.showMask) {
-        // Strength of the effect: threshold mask x mix x distance from the optical centre.
-        CKPix v;
-        v.r = m * field;
-        v.g = v.r;
-        v.b = v.r;
-        v.a = 1.0f;
-        ck_write(p, dst, x, y, v);
-        return;
-    }
     if (m <= 0.0f) {
-        ck_store(p, dst, x, y, orig);
+        if (p.showMask) ck_mask_view(p, dst, x, y, orig, orig);
+        else ck_store(p, dst, x, y, orig);
         return;
     }
     float r = 0.0f, g = 0.0f, b = 0.0f;
@@ -528,7 +540,8 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
     out.g = orig.g + (g - orig.g) * m;
     out.b = orig.b + (b - orig.b) * m;
     out.a = orig.a + (a - orig.a) * m;
-    ck_store(p, dst, x, y, out);
+    if (p.showMask) ck_mask_view(p, dst, x, y, orig, out);
+    else ck_store(p, dst, x, y, out);
 }
 
 #endif  // CHROMATRON_KERNELS_H

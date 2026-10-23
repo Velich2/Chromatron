@@ -335,8 +335,8 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                  abr, page);
     BooleanParamDescriptor* showMask = desc.defineBooleanParam(kShowMask);
     showMask->setLabels("Show Mask", "Show Mask", "Show Mask");
-    showMask->setHint("Display the strength of the aberration: black = none, white = full (threshold, mix and "
-                      "distance from the optical center).");
+    showMask->setHint("Display where fringes appear: black = untouched, white = strong fringe. Includes the "
+                      "threshold, mix and growth towards the frame corners.");
     showMask->setDefault(false);
     showMask->setParent(*abr);
     page->addChild(*showMask);
