@@ -89,7 +89,9 @@ if(CHROMATRON_WITH_CUDA)
         endif()
         enable_language(CUDA)
         target_sources(chromatron_core PRIVATE src/backends/CudaBackend.cu)
-        set_target_properties(chromatron_core PROPERTIES CUDA_RUNTIME_LIBRARY Static)
+        # chromatron_core already exists, so it did not pick up CMAKE_CUDA_ARCHITECTURES.
+        set_target_properties(chromatron_core PROPERTIES CUDA_RUNTIME_LIBRARY Static
+                                                         CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
         find_package(CUDAToolkit REQUIRED)
         target_link_libraries(chromatron_core PUBLIC CUDA::cudart_static)
         target_compile_definitions(chromatron_core PUBLIC CHROMATRON_HAS_CUDA=1)

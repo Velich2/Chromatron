@@ -23,7 +23,7 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -V
       - uses: actions/upload-artifact@v4
         with:
           name: Chromatron-OFX-Linux
@@ -45,7 +45,7 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure -V
       - uses: actions/upload-artifact@v4
         with:
           name: Chromatron-OFX-Windows
@@ -61,7 +61,7 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -V
       - uses: actions/upload-artifact@v4
         with:
           name: Chromatron-OFX-macOS
