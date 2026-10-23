@@ -7,7 +7,7 @@
 //   --mode sep|abr  --pair rc|gm|by|rb  --angle DEG  --distance PX  --spread 0..1
 //   --lateral PX  --balance -1..1  --cx 0..1 --cy 0..1  --threshold 0..1  --softness 0..1
 //   --show-mask  --blur PX  --samples N  --mix 0..1
-//   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065   (encoding of the file's pixels)
+//   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065|dwg|dwglinear   (encoding of the pixels)
 
 #include "core/Chromatron.h"
 
@@ -287,9 +287,10 @@ int main(int argc, char** argv)
             else if (a == "--backend") backend = next();
             else if (a == "--space") {
                 const std::string v = next();
-                const char* names[] = {"linear", "srgb", "rec709", "acescg", "acescct", "acescc", "aces2065"};
+                const char* names[] = {"linear", "srgb",     "rec709", "acescg",   "acescct",
+                                       "acescc", "aces2065", "dwg",    "dwglinear"};
                 bool found = false;
-                for (int k = 0; k < 7; ++k)
+                for (int k = 0; k < 9; ++k)
                     if (v == names[k]) {
                         s.space = (ColorSpace)k;
                         found = true;
@@ -333,7 +334,7 @@ int main(int argc, char** argv)
         std::cerr << backend << ": " << in.w << "x" << in.h << ", " << plan.params.numTaps << " taps, "
                   << plan.params.numLevels << " levels, " << ms << " ms\n";
         const bool linear = s.space == ColorSpace::LinearRec709 || s.space == ColorSpace::ACEScg ||
-                            s.space == ColorSpace::ACES2065;
+                            s.space == ColorSpace::ACES2065 || s.space == ColorSpace::DWGLinear;
         writeImage(pos.back(), out, linear);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

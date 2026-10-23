@@ -51,9 +51,15 @@ Fringe Balance — в том числе на тонких линиях, где �
 | ACEScg | линейный AP1 |
 | ACEScct / ACEScc | декод → ACEScg (AP1) → обратно |
 | ACES2065-1 (AP0) | AP0 → AP1 → обратно |
+| DaVinci Wide Gamut / Intermediate | декод Intermediate → DWG → ACEScg (AP1) → обратно |
+| DaVinci Wide Gamut (linear) | DWG → AP1 → обратно |
 
-Для ACES используются коэффициенты яркости AP1, а оси кайм переносятся из Rec.709 в AP1 — оттенки одинаковы в любом
-пайплайне. В Resolve: проект ACES → *ACEScct*; DaVinci YRGB без управления цветом → *Rec.709 Gamma 2.4* (по умолчанию).
+Широкие гаммы (ACES, DaVinci Wide Gamut) обрабатываются в AP1 с его коэффициентами яркости; оси кайм переносятся
+из Rec.709 в AP1 — оттенки одинаковы в любом пайплайне. Матрица DWG↔AP1 выведена из первичных цветов DWG
+(Bradford D65→D60, тем же способом получается эталонная Rec.709→AP1).
+В Resolve: проект ACES → *ACEScct*; DaVinci YRGB Color Managed с широкой гаммой (timeline DaVinci Wide Gamut /
+Intermediate) → *DaVinci Wide Gamut / Intermediate*; DaVinci YRGB без управления цветом → *Rec.709 Gamma 2.4*
+(по умолчанию).
 В After Effects: 8/16 бит без линеаризации → *sRGB*, линеаризованный 32 бит → *Linear*, OCIO/ACES → *ACEScg*.
 
 ## Как устроено

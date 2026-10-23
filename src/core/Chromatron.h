@@ -12,7 +12,8 @@ enum class Mode { Separation = 0, Aberration = 1 };
 enum class ColorPair { RedCyan = 0, GreenMagenta = 1, BlueYellow = 2, RedBlue = 3 };
 
 // Encoding of the images the host hands over. The optics always run on linear light:
-// ACES inputs are processed in ACEScg (AP1), everything else in linear Rec.709.
+// ACES and DaVinci Wide Gamut inputs are processed in ACEScg (AP1), the rest in linear
+// Rec.709. New values are only ever appended (hosts store the index in projects).
 enum class ColorSpace {
     LinearRec709 = 0,  // scene-linear, Rec.709 / sRGB primaries
     SRGB = 1,          // sRGB-encoded
@@ -21,6 +22,8 @@ enum class ColorSpace {
     ACEScct = 4,
     ACEScc = 5,
     ACES2065 = 6,      // linear AP0
+    DWGIntermediate = 7, // DaVinci Wide Gamut / DaVinci Intermediate
+    DWGLinear = 8,       // DaVinci Wide Gamut, linear
 };
 
 struct Settings {

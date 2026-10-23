@@ -32,6 +32,7 @@
 #define CK_TRANSFER_GAMMA24 2
 #define CK_TRANSFER_ACESCCT 3
 #define CK_TRANSFER_ACESCC 4
+#define CK_TRANSFER_DAVINCI_INTERMEDIATE 5
 
 // Channel order of an external (host) buffer.
 #define CK_ORDER_RGBA 0
@@ -240,6 +241,10 @@ CK_FN float ck_decode(int transfer, float v)
         if (v < -0.3013698630136986f) return (ck_exp2f(v * 17.52f - 9.72f) - 1.52587890625e-05f) * 2.0f;
         return ck_fminf(ck_exp2f(v * 17.52f - 9.72f), 65504.0f);
     }
+    if (transfer == CK_TRANSFER_DAVINCI_INTERMEDIATE) {
+        if (v <= 0.02740668f) return v / 10.44426855f;
+        return ck_exp2f(v / 0.07329248f - 7.0f) - 0.0075f;
+    }
     return v;
 }
 
@@ -259,6 +264,10 @@ CK_FN float ck_encode(int transfer, float l)
         if (l <= 0.0f) return -0.3584474885844749f;  // (log2(2^-16) + 9.72) / 17.52
         if (l < 3.0517578125e-05f) return (ck_log2f(1.52587890625e-05f + l * 0.5f) + 9.72f) / 17.52f;
         return (ck_log2f(l) + 9.72f) / 17.52f;
+    }
+    if (transfer == CK_TRANSFER_DAVINCI_INTERMEDIATE) {
+        if (l <= 0.00262409f) return l * 10.44426855f;
+        return (ck_log2f(l + 0.0075f) + 7.0f) * 0.07329248f;
     }
     return l;
 }

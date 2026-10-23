@@ -202,7 +202,8 @@ void testRegionAndOrder()
 
 void testTransfers()
 {
-    const int transfers[] = {CK_TRANSFER_SRGB, CK_TRANSFER_GAMMA24, CK_TRANSFER_ACESCCT, CK_TRANSFER_ACESCC};
+    const int transfers[] = {CK_TRANSFER_SRGB, CK_TRANSFER_GAMMA24, CK_TRANSFER_ACESCCT, CK_TRANSFER_ACESCC,
+                             CK_TRANSFER_DAVINCI_INTERMEDIATE};
     float worst = 0.0f;
     bool monotonic = true;
     for (int t : transfers) {
@@ -219,6 +220,12 @@ void testTransfers()
     expect(std::fabs(ck_encode(CK_TRANSFER_ACESCCT, 0.18f) - 0.4135884f) < 1e-5f &&
                std::fabs(ck_encode(CK_TRANSFER_ACESCCT, 0.0f) - 0.0729055f) < 1e-6f,
            "ACEScct matches reference values");
+    // DaVinci Intermediate: 0.18 -> 0.336043, continuous at the linear/log cut.
+    const float di = CK_TRANSFER_DAVINCI_INTERMEDIATE;
+    expect(std::fabs(ck_encode((int)di, 0.18f) - 0.336043f) < 1e-5f &&
+               std::fabs(ck_encode((int)di, 0.00262409f) - ck_encode((int)di, 0.002624091f)) < 1e-5f &&
+               std::fabs(ck_decode((int)di, 0.02740668f) - 0.00262409f) < 1e-6f,
+           "DaVinci Intermediate matches reference values");
 }
 
 // ACES pipelines: encoded input, AP1 working space, and still no magenta/green.
@@ -256,6 +263,48 @@ void testAces()
            "ACES2065-1 flat field round-trips through AP1");
 }
 
+// DaVinci Wide Gamut / Intermediate: processed in AP1, still no magenta/green, and a flat
+// DWG colour survives the DWG -> AP1 -> DWG round trip.
+void testDaVinciWideGamut()
+{
+    static const float kDWGToAP1[9] = {1.1009153806f,  0.0049040236f,  -0.1058194042f,
+                                       -0.0231810217f, 1.3045763156f,  -0.2813952938f,
+                                       -0.0850871489f, -0.1277639230f, 1.2128510719f};
+    Frame f = neutralChart(120, 80);
+    for (size_t i = 0; i < f.px.size(); i += 4)
+        for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(CK_TRANSFER_DAVINCI_INTERMEDIATE, f.px[i + c]);
+    Settings s = aberration();
+    s.space = ColorSpace::DWGIntermediate;
+    const Geometry g = fullGeometry(f.w, f.h);
+    const CKParams p = buildPlan(s, g).params;
+    const std::vector<float> out = runCpu(s, g, f.px);
+    float worst = 0.0f, strongest = 0.0f;
+    for (size_t i = 0; i < out.size(); i += 4) {
+        float dwg[3], rgb[3];
+        for (int c = 0; c < 3; ++c) dwg[c] = ck_decode(CK_TRANSFER_DAVINCI_INTERMEDIATE, out[i + c]);
+        for (int r = 0; r < 3; ++r)
+            rgb[r] = kDWGToAP1[r * 3] * dwg[0] + kDWGToAP1[r * 3 + 1] * dwg[1] + kDWGToAP1[r * 3 + 2] * dwg[2];
+        const float y = p.lumR * rgb[0] + p.lumG * rgb[1] + p.lumB * rgb[2];
+        worst = std::fmax(worst, std::fabs((rgb[0] - y) * p.fringeDualX + (rgb[1] - y) * p.fringeDualY +
+                                           (rgb[2] - y) * p.fringeDualZ));
+        strongest = std::fmax(strongest, std::fabs(rgb[0] - y) + std::fabs(rgb[2] - y));
+    }
+    char what[128];
+    std::snprintf(what, sizeof(what), "DWG/Intermediate: no magenta/green in AP1 (%.2g) while fringing (%.2g)",
+                  worst, strongest);
+    expect(worst < 1e-3f && strongest > 0.05f, what);
+
+    const Frame flat = makeFrame(40, 30, [](int, int, float* px) {
+        px[0] = 0.5f;
+        px[1] = 0.25f;
+        px[2] = 0.1f;
+        px[3] = 1.0f;
+    });
+    s.space = ColorSpace::DWGLinear;
+    expect(maxDiff(runCpu(s, fullGeometry(flat.w, flat.h), flat.px), flat.px) < 1e-5f,
+           "DaVinci Wide Gamut flat field round-trips through AP1");
+}
+
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
@@ -275,9 +324,9 @@ void testOpenCL()
         s.mode = (Mode)mode;
         s.threshold = 0.4;
         s.distance = 9.0;
-        s.space = mode ? ColorSpace::ACEScct : ColorSpace::SRGB;
+        s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::SRGB;
         Frame f = neutralChart(96, 64);
-        const int transfer = mode ? CK_TRANSFER_ACESCCT : CK_TRANSFER_SRGB;
+        const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_SRGB;
         for (size_t i = 0; i < f.px.size(); i += 4)
             for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(transfer, f.px[i + c]);
         const Geometry g = fullGeometry(f.w, f.h);
@@ -317,6 +366,7 @@ int main()
     testRegionAndOrder();
     testTransfers();
     testAces();
+    testDaVinciWideGamut();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
 #endif

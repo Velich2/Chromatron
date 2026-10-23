@@ -286,7 +286,8 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
     space->setLabels("Color Space", "Color Space", "Color Space");
     space->setHint("Encoding of the timeline / clip. The optics run on linear light; ACES inputs are processed "
-                   "in ACEScg (AP1). Use ACEScct for Resolve ACES projects.");
+                   "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
+                   "DaVinci Wide Gamut / Intermediate.");
     space->appendOption("Linear (Rec.709 primaries)");
     space->appendOption("sRGB");
     space->appendOption("Rec.709 Gamma 2.4");
@@ -294,6 +295,8 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     space->appendOption("ACEScct");
     space->appendOption("ACEScc");
     space->appendOption("ACES2065-1 (AP0)");
+    space->appendOption("DaVinci Wide Gamut / Intermediate");
+    space->appendOption("DaVinci Wide Gamut (linear)");
     space->setDefault((int)cx::ColorSpace::Rec709Gamma24);
     space->setAnimates(false);
     page->addChild(*space);

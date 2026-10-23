@@ -178,10 +178,25 @@ const double kAP0ToAP1[9] = {1.4514393161, -0.2365107469, -0.2149285693, -0.0765
                              -0.0996759264, 0.0083161484, -0.0060324498, 0.9977163014};
 const double kAP1ToAP0[9] = {0.6954522414, 0.1406786965, 0.1638690622, 0.0447945634, 0.8596711185,
                              0.0955343182, -0.0055258826, 0.0040252103, 1.0015006723};
+// DaVinci Wide Gamut (D65) <-> AP1 (D60), Bradford-adapted like the ACES Rec.709 matrix.
+const double kDWGToAP1[9] = {1.1009153806, 0.0049040236, -0.1058194042, -0.0231810217, 1.3045763156,
+                             -0.2813952938, -0.0850871489, -0.1277639230, 1.2128510719};
+const double kAP1ToDWG[9] = {0.9146775330, 0.0044790565, 0.0808434105, 0.0307937463, 0.7845053498,
+                             0.1847009039, 0.0674127559, 0.0829554375, 0.8496318066};
 const double kLumRec709[3] = {0.2126, 0.7152, 0.0722};
 const double kLumAP1[3] = {0.2722287168, 0.6740817658, 0.0536895174};
 
-bool isAces(ColorSpace cs) { return cs >= ColorSpace::ACEScg; }
+// Wide-gamut inputs (ACES, DaVinci Wide Gamut) are processed in AP1.
+bool workInAP1(ColorSpace cs) { return cs >= ColorSpace::ACEScg; }
+
+void setMatrices(CKParams& p, const double* toWork, const double* fromWork)
+{
+    p.useMatrix = 1;
+    for (int i = 0; i < 9; ++i) {
+        p.toWork[i] = (float)toWork[i];
+        p.fromWork[i] = (float)fromWork[i];
+    }
+}
 
 void setupColorSpace(CKParams& p, ColorSpace cs)
 {
@@ -190,32 +205,28 @@ void setupColorSpace(CKParams& p, ColorSpace cs)
     case ColorSpace::Rec709Gamma24: p.transfer = CK_TRANSFER_GAMMA24; break;
     case ColorSpace::ACEScct: p.transfer = CK_TRANSFER_ACESCCT; break;
     case ColorSpace::ACEScc: p.transfer = CK_TRANSFER_ACESCC; break;
+    case ColorSpace::DWGIntermediate: p.transfer = CK_TRANSFER_DAVINCI_INTERMEDIATE; break;
     default: p.transfer = CK_TRANSFER_LINEAR; break;
     }
-    const double* lum = isAces(cs) ? kLumAP1 : kLumRec709;
+    const double* lum = workInAP1(cs) ? kLumAP1 : kLumRec709;
     p.lumR = (float)lum[0];
     p.lumG = (float)lum[1];
     p.lumB = (float)lum[2];
-    if (cs == ColorSpace::ACES2065) {
-        p.useMatrix = 1;
-        for (int i = 0; i < 9; ++i) {
-            p.toWork[i] = (float)kAP0ToAP1[i];
-            p.fromWork[i] = (float)kAP1ToAP0[i];
-        }
-    }
+    if (cs == ColorSpace::ACES2065) setMatrices(p, kAP0ToAP1, kAP1ToAP0);
+    if (cs == ColorSpace::DWGIntermediate || cs == ColorSpace::DWGLinear) setMatrices(p, kDWGToAP1, kAP1ToDWG);
 }
 
 // Fills the magenta/green direction (zero luminance) and its dual so the kernel can
 // remove that component from the dispersion while keeping luminance and the warm/cool axis.
 // The axis is designed in Rec.709 and carried into AP1 for ACES working spaces, so the
 // fringe hues stay the same whatever the pipeline.
-void setupFringeCleaning(CKParams& p, double balance, bool aces)
+void setupFringeCleaning(CKParams& p, double balance, bool ap1)
 {
     const double lum[3] = {p.lumR, p.lumG, p.lumB};
     double u709[3], u[3];
     fringeAxis(balance, u709);
     for (int r = 0; r < 3; ++r)
-        u[r] = aces ? kRec709ToAP1[r * 3] * u709[0] + kRec709ToAP1[r * 3 + 1] * u709[1] +
+        u[r] = ap1 ? kRec709ToAP1[r * 3] * u709[0] + kRec709ToAP1[r * 3 + 1] * u709[1] +
                           kRec709ToAP1[r * 3 + 2] * u709[2]
                     : u709[r];
     // m0 = n x u, orthogonal to neutral and to the allowed axis.
@@ -294,7 +305,7 @@ Plan buildPlan(const Settings& s, const Geometry& g)
         p.radialScale = (float)(s.lateral * rs / hd);
         p.invHalfDiagonal = (float)(1.0 / hd);
         taps = aberrationTaps(s, rs, lum);
-        setupFringeCleaning(p, s.balance, isAces(s.space));
+        setupFringeCleaning(p, s.balance, workInAP1(s.space));
 
         if (s.threshold > 0.0005) {
             const double th = std::min(1.0, s.threshold);
