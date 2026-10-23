@@ -157,16 +157,16 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     PF_ParamDef def;
 
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Mode", 2, 2, "RGB Separation|Lens Aberration", ID_MODE);
+    PF_ADD_POPUP("Mode", 2, 1, "RGB Separation|Lens Aberration", ID_MODE);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("RGB Separation", ID_SEP_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Pair", 4, 1, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
+    PF_ADD_POPUP("Color Pair", 4, 4, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_ANGLE("Angle", 0, ID_ANGLE);
+    PF_ADD_ANGLE("Angle", 45, ID_ANGLE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Distance", 0, 2000, 0, 60, 8, PF_Precision_TENTHS, 0, 0, ID_DISTANCE);
+    PF_ADD_FLOAT_SLIDERX("Distance", 0, 2000, 0, 60, 2, PF_Precision_TENTHS, 0, 0, ID_DISTANCE);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Spread", 0, 1, 0, 1, 0.25, PF_Precision_HUNDREDTHS, 0, 0, ID_SPREAD);
     AEFX_CLR_STRUCT(def);
@@ -175,7 +175,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Lens Aberration", ID_ABR_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Lateral", -500, 500, -40, 40, 6, PF_Precision_TENTHS, 0, 0, ID_LATERAL);
+    PF_ADD_FLOAT_SLIDERX("Lateral", -500, 500, -40, 40, 5, PF_Precision_TENTHS, 0, 0, ID_LATERAL);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Fringe Balance", -1, 1, -1, 1, 0, PF_Precision_HUNDREDTHS, 0, 0, ID_BALANCE);
     AEFX_CLR_STRUCT(def);
@@ -192,18 +192,18 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Optics", ID_OPTICS_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Channel Blur", 0, 200, 0, 20, 2, PF_Precision_TENTHS, 0, 0, ID_BLUR);
+    PF_ADD_FLOAT_SLIDERX("Channel Blur", 0, 200, 0, 20, 0, PF_Precision_TENTHS, 0, 0, ID_BLUR);
     AEFX_CLR_STRUCT(def);
     PF_ADD_SLIDER("Spectral Samples", 3, CK_MAX_TAPS, 3, CK_MAX_TAPS, 12, ID_SAMPLES);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Mix", 0, 1, 0, 1, 1, PF_Precision_HUNDREDTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIX);
+    PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIX);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_OPTICS_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_CHECKBOXX("Use GPU", TRUE, 0, ID_USE_GPU);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Space", 10, 2,
+    PF_ADD_POPUP("Color Space", 10, 3,
                  "Linear (Rec.709 primaries)|sRGB|Rec.709 Gamma 2.4 (BT.1886)|ACEScg|ACEScct|ACEScc|"
                  "ACES2065-1 (AP0)|DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)|Rec.709 (Scene)",
                  ID_SPACE);
@@ -269,7 +269,7 @@ PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
     get(P_SHOW_MASK, [&](PF_ParamDef& d) { s.showMask = d.u.bd.value != 0; });
     get(P_BLUR, [&](PF_ParamDef& d) { s.channelBlur = d.u.fs_d.value; });
     get(P_SAMPLES, [&](PF_ParamDef& d) { s.samples = (int)d.u.sd.value; });
-    get(P_MIX, [&](PF_ParamDef& d) { s.mix = d.u.fs_d.value; });
+    get(P_MIX, [&](PF_ParamDef& d) { s.mix = d.u.fs_d.value / 100.0; });
     get(P_USE_GPU, [&](PF_ParamDef& d) { out.useGpu = d.u.bd.value != 0; });
     return err;
 }

@@ -93,8 +93,13 @@ Frame neutralChart(int w, int h)
 
 Settings aberration()
 {
+    // Explicit values, independent of the plug-in's UI defaults.
     Settings s;
     s.mode = Mode::Aberration;
+    s.space = ColorSpace::LinearRec709;
+    s.pair = ColorPair::RedCyan;
+    s.angleDeg = 0.0;
+    s.distance = 8.0;
     s.lateral = 12.0;
     s.channelBlur = 2.5;
     return s;
@@ -289,6 +294,23 @@ void testTransfers()
            "Rec.709 (Scene) matches reference values");
 }
 
+// The colour space must matter at the plug-in's default settings: fringes are mixed in
+// linear light, so the same encoded picture gives different edges per encoding.
+void testColorSpaceMatters()
+{
+    const Frame f = neutralChart(96, 64);
+    Settings s;  // UI defaults
+    s.space = ColorSpace::LinearRec709;
+    const std::vector<float> lin = runCpu(s, fullGeometry(f.w, f.h), f.px);
+    for (ColorSpace cs : {ColorSpace::SRGB, ColorSpace::Rec709Gamma24}) {
+        s.space = cs;
+        const float d = maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), lin);
+        char what[96];
+        std::snprintf(what, sizeof(what), "colour space %d changes the default render (max diff %.3f)", (int)cs, d);
+        expect(d > 0.02f, what);
+    }
+}
+
 // ACES pipelines: encoded input, AP1 working space, and still no magenta/green.
 void testAces()
 {
@@ -473,6 +495,7 @@ int main()
     testShowMask();
     testRegionAndOrder();
     testTransfers();
+    testColorSpaceMatters();
     testAces();
     testDaVinciWideGamut();
 #if CHROMATRON_HAS_OPENCL

@@ -292,7 +292,7 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     mode->setHint("RGB Separation: a colour pair pushed apart. Lens Aberration: lateral colour of real glass.");
     mode->appendOption("RGB Separation");
     mode->appendOption("Lens Aberration");
-    mode->setDefault(1);
+    mode->setDefault(0);
     page->addChild(*mode);
 
     GroupParamDescriptor* sep = defineGroup(desc, "separationGroup", "RGB Separation", page);
@@ -303,20 +303,20 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     pair->appendOption("Green / Magenta");
     pair->appendOption("Blue / Yellow");
     pair->appendOption("Red / Blue (green fixed)");
-    pair->setDefault(0);
+    pair->setDefault((int)cx::ColorPair::RedBlue);
     pair->setParent(*sep);
     page->addChild(*pair);
-    DoubleParamDescriptor* angle = defineDouble(desc, kAngle, "Angle", "Direction of the split (degrees).", 0.0,
+    DoubleParamDescriptor* angle = defineDouble(desc, kAngle, "Angle", "Direction of the split (degrees).", 45.0,
                                                 -3600.0, 3600.0, -180.0, 180.0, sep, page);
     angle->setDoubleType(eDoubleTypeAngle);
-    defineDouble(desc, kDistance, "Distance", "Distance between the two channel groups, pixels.", 8.0, 0.0, 2000.0, 0.0,
+    defineDouble(desc, kDistance, "Distance", "Distance between the two channel groups, pixels.", 2.0, 0.0, 2000.0, 0.0,
                  60.0, sep, page);
     defineDouble(desc, kSpread, "Spread", "0 = hard digital offset, 1 = soft prism-like smear.", 0.25, 0.0, 1.0, 0.0,
                  1.0, sep, page);
 
     GroupParamDescriptor* abr = defineGroup(desc, "aberrationGroup", "Lens Aberration", page);
     defineDouble(desc, kLateral, "Lateral", "Spread of the spectrum at the frame corner, pixels. Negative swaps sides.",
-                 6.0, -500.0, 500.0, -40.0, 40.0, abr, page);
+                 5.0, -500.0, 500.0, -40.0, 40.0, abr, page);
     defineDouble(desc, kBalance, "Fringe Balance",
                  "-1 red-orange / cyan, 0 orange / teal, +1 golden / azure. Never magenta, purple or green.", 0.0,
                  -1.0, 1.0, -1.0, 1.0, abr, page);
@@ -342,7 +342,7 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     page->addChild(*showMask);
 
     GroupParamDescriptor* optics = defineGroup(desc, "opticsGroup", "Optics", page);
-    defineDouble(desc, kBlur, "Channel Blur", "Defocus of the most displaced wavelengths, pixels.", 2.0, 0.0, 200.0, 0.0,
+    defineDouble(desc, kBlur, "Channel Blur", "Defocus of the most displaced wavelengths, pixels.", 0.0, 0.0, 200.0, 0.0,
                  20.0, optics, page);
     IntParamDescriptor* samples = desc.defineIntParam(kSamples);
     samples->setLabels("Spectral Samples", "Spectral Samples", "Spectral Samples");

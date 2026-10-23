@@ -28,24 +28,24 @@ enum class ColorSpace {
 };
 
 struct Settings {
-    Mode mode = Mode::Aberration;
-    ColorSpace space = ColorSpace::LinearRec709;
+    Mode mode = Mode::Separation;
+    ColorSpace space = ColorSpace::Rec709Gamma24;
 
     // RGB separation
-    ColorPair pair = ColorPair::RedCyan;
-    double angleDeg = 0.0;   // direction the first group of the pair moves to
-    double distance = 8.0;   // px at full resolution between the two channel groups
+    ColorPair pair = ColorPair::RedBlue;
+    double angleDeg = 45.0;  // direction the first group of the pair moves to
+    double distance = 2.0;   // px at full resolution between the two channel groups
     double spread = 0.25;    // 0 = hard digital split, 1 = soft optical smear
 
     // Lens aberration
-    double lateral = 6.0;    // px between spectrum ends at the frame corner (sign swaps warm/cool sides)
+    double lateral = 5.0;    // px between spectrum ends at the frame corner (sign swaps warm/cool sides)
     double balance = 0.0;    // -1 = red end disperses (red/cyan), +1 = blue end disperses (blue/yellow)
     double threshold = 0.0;  // 0 = everywhere, 1 = only the strongest light transitions
     double softness = 0.5;   // width of the threshold transition
     bool showMask = false;
 
     // Common
-    double channelBlur = 2.0;  // px defocus of the most displaced wavelengths
+    double channelBlur = 0.0;  // px defocus of the most displaced wavelengths
     int samples = 12;          // spectral taps (quality)
     double mix = 1.0;
 };
