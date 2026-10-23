@@ -7,6 +7,7 @@
 #include "AE_Effect.h"
 #include "AE_EffectCB.h"
 #include "AE_EffectCBSuites.h"
+#include "AE_EffectSuites.h"
 #include "AE_EffectGPUSuites.h"
 #include "AE_EffectPixelFormat.h"
 #include "AE_Macros.h"
@@ -504,8 +505,10 @@ extern "C" DllExport PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr, PF_
     (void)inSPBasicSuitePtr;
     (void)inHostName;
     (void)inHostVersion;
-    return PF_REGISTER_EFFECT_EXT2(inPtr, inPluginDataCallBackPtr, "Chromatron", "CHRM Chromatron", "Chromatron",
-                                   AE_RESERVED_INFO, "EffectMain", "https://github.com/velich2/chromatron");
+    PF_Err result = PF_Err_INVALID_CALLBACK;  // assigned by PF_REGISTER_EFFECT_EXT2
+    PF_REGISTER_EFFECT_EXT2(inPtr, inPluginDataCallBackPtr, "Chromatron", "CHRM Chromatron", "Chromatron",
+                            AE_RESERVED_INFO, "EffectMain", "https://github.com/velich2/chromatron");
+    return result;
 }
 
 extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[],
