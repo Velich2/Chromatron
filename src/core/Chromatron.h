@@ -17,13 +17,14 @@ enum class ColorPair { RedCyan = 0, GreenMagenta = 1, BlueYellow = 2, RedBlue = 
 enum class ColorSpace {
     LinearRec709 = 0,  // scene-linear, Rec.709 / sRGB primaries
     SRGB = 1,          // sRGB-encoded
-    Rec709Gamma24 = 2, // Rec.709 / BT.1886 display (gamma 2.4)
+    Rec709Gamma24 = 2, // Rec.709 display, BT.1886 with zero black (gamma 2.4)
     ACEScg = 3,        // linear AP1
     ACEScct = 4,
     ACEScc = 5,
     ACES2065 = 6,      // linear AP0
     DWGIntermediate = 7, // DaVinci Wide Gamut / DaVinci Intermediate
     DWGLinear = 8,       // DaVinci Wide Gamut, linear
+    Rec709Scene = 9,     // Rec.709 (Scene): BT.709 camera OETF
 };
 
 struct Settings {

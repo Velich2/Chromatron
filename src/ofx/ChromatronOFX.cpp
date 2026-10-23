@@ -290,13 +290,14 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                    "DaVinci Wide Gamut / Intermediate.");
     space->appendOption("Linear (Rec.709 primaries)");
     space->appendOption("sRGB");
-    space->appendOption("Rec.709 Gamma 2.4");
+    space->appendOption("Rec.709 Gamma 2.4 (BT.1886)");
     space->appendOption("ACEScg");
     space->appendOption("ACEScct");
     space->appendOption("ACEScc");
     space->appendOption("ACES2065-1 (AP0)");
     space->appendOption("DaVinci Wide Gamut / Intermediate");
     space->appendOption("DaVinci Wide Gamut (linear)");
+    space->appendOption("Rec.709 (Scene)");
     space->setDefault((int)cx::ColorSpace::Rec709Gamma24);
     space->setAnimates(false);
     page->addChild(*space);

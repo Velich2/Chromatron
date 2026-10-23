@@ -203,7 +203,7 @@ void testRegionAndOrder()
 void testTransfers()
 {
     const int transfers[] = {CK_TRANSFER_SRGB, CK_TRANSFER_GAMMA24, CK_TRANSFER_ACESCCT, CK_TRANSFER_ACESCC,
-                             CK_TRANSFER_DAVINCI_INTERMEDIATE};
+                             CK_TRANSFER_DAVINCI_INTERMEDIATE, CK_TRANSFER_REC709_SCENE};
     float worst = 0.0f;
     bool monotonic = true;
     for (int t : transfers) {
@@ -226,6 +226,12 @@ void testTransfers()
                std::fabs(ck_encode((int)di, 0.00262409f) - ck_encode((int)di, 0.002624091f)) < 1e-5f &&
                std::fabs(ck_decode((int)di, 0.02740668f) - 0.00262409f) < 1e-6f,
            "DaVinci Intermediate matches reference values");
+    // Rec.709 (Scene) OETF: 0.18 -> 0.408848, continuous at the 0.018054 break point.
+    expect(std::fabs(ck_encode(CK_TRANSFER_REC709_SCENE, 0.18f) - 0.408848f) < 1e-5f &&
+               std::fabs(ck_encode(CK_TRANSFER_REC709_SCENE, 0.0180539f) -
+                         ck_encode(CK_TRANSFER_REC709_SCENE, 0.0180540f)) < 1e-5f &&
+               std::fabs(ck_decode(CK_TRANSFER_REC709_SCENE, 0.408848f) - 0.18f) < 1e-5f,
+           "Rec.709 (Scene) matches reference values");
 }
 
 // ACES pipelines: encoded input, AP1 working space, and still no magenta/green.
@@ -324,9 +330,9 @@ void testOpenCL()
         s.mode = (Mode)mode;
         s.threshold = 0.4;
         s.distance = 9.0;
-        s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::SRGB;
+        s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
         Frame f = neutralChart(96, 64);
-        const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_SRGB;
+        const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
         for (size_t i = 0; i < f.px.size(); i += 4)
             for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(transfer, f.px[i + c]);
         const Geometry g = fullGeometry(f.w, f.h);

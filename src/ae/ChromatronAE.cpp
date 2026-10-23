@@ -156,9 +156,9 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_POPUP("Mode", 2, 2, "RGB Separation|Lens Aberration", ID_MODE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Space", 9, 2,
-                 "Linear (Rec.709 primaries)|sRGB|Rec.709 Gamma 2.4|ACEScg|ACEScct|ACEScc|ACES2065-1 (AP0)|"
-                 "DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)",
+    PF_ADD_POPUP("Color Space", 10, 2,
+                 "Linear (Rec.709 primaries)|sRGB|Rec.709 Gamma 2.4 (BT.1886)|ACEScg|ACEScct|ACEScc|"
+                 "ACES2065-1 (AP0)|DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)|Rec.709 (Scene)",
                  ID_SPACE);
 
     AEFX_CLR_STRUCT(def);
@@ -246,7 +246,7 @@ PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
     };
     cx::Settings& s = out.settings;
     get(P_MODE, [&](PF_ParamDef& d) { s.mode = d.u.pd.value == 1 ? cx::Mode::Separation : cx::Mode::Aberration; });
-    get(P_SPACE, [&](PF_ParamDef& d) { s.space = (cx::ColorSpace)std::max(0, std::min(8, (int)d.u.pd.value - 1)); });
+    get(P_SPACE, [&](PF_ParamDef& d) { s.space = (cx::ColorSpace)std::max(0, std::min(9, (int)d.u.pd.value - 1)); });
     get(P_PAIR, [&](PF_ParamDef& d) { s.pair = (cx::ColorPair)std::max(0, std::min(3, (int)d.u.pd.value - 1)); });
     get(P_ANGLE, [&](PF_ParamDef& d) { s.angleDeg = FIX_2_FLOAT(d.u.ad.value); });
     get(P_DISTANCE, [&](PF_ParamDef& d) { s.distance = d.u.fs_d.value; });

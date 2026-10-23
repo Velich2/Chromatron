@@ -33,6 +33,7 @@
 #define CK_TRANSFER_ACESCCT 3
 #define CK_TRANSFER_ACESCC 4
 #define CK_TRANSFER_DAVINCI_INTERMEDIATE 5
+#define CK_TRANSFER_REC709_SCENE 6  // BT.709 camera OETF (precise BT.2020 constants)
 
 // Channel order of an external (host) buffer.
 #define CK_ORDER_RGBA 0
@@ -233,6 +234,11 @@ CK_FN float ck_decode(int transfer, float v)
         return v < 0.0f ? -l : l;
     }
     if (transfer == CK_TRANSFER_GAMMA24) return ck_spow(v, 2.4f);
+    if (transfer == CK_TRANSFER_REC709_SCENE) {
+        const float a = ck_fabsf(v);
+        const float l = a < 0.0812428583f ? a / 4.5f : ck_powf((a + 0.0992968268f) / 1.0992968268f, 1.0f / 0.45f);
+        return v < 0.0f ? -l : l;
+    }
     if (transfer == CK_TRANSFER_ACESCCT) {
         if (v <= 0.155251141552511f) return (v - 0.0729055341958355f) / 10.5402377416545f;
         return ck_exp2f(v * 17.52f - 9.72f);
@@ -256,6 +262,11 @@ CK_FN float ck_encode(int transfer, float l)
         return l < 0.0f ? -v : v;
     }
     if (transfer == CK_TRANSFER_GAMMA24) return ck_spow(l, 1.0f / 2.4f);
+    if (transfer == CK_TRANSFER_REC709_SCENE) {
+        const float a = ck_fabsf(l);
+        const float v = a < 0.0180539685f ? a * 4.5f : 1.0992968268f * ck_powf(a, 0.45f) - 0.0992968268f;
+        return l < 0.0f ? -v : v;
+    }
     if (transfer == CK_TRANSFER_ACESCCT) {
         if (l <= 0.0078125f) return 10.5402377416545f * l + 0.0729055341958355f;
         return (ck_log2f(l) + 9.72f) / 17.52f;

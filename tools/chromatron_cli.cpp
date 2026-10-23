@@ -7,7 +7,8 @@
 //   --mode sep|abr  --pair rc|gm|by|rb  --angle DEG  --distance PX  --spread 0..1
 //   --lateral PX  --balance -1..1  --cx 0..1 --cy 0..1  --threshold 0..1  --softness 0..1
 //   --show-mask  --blur PX  --samples N  --mix 0..1
-//   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065|dwg|dwglinear   (encoding of the pixels)
+//   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065|dwg|dwglinear|rec709scene
+//           (encoding of the pixels; rec709 = gamma 2.4 / BT.1886)
 
 #include "core/Chromatron.h"
 
@@ -288,9 +289,9 @@ int main(int argc, char** argv)
             else if (a == "--space") {
                 const std::string v = next();
                 const char* names[] = {"linear", "srgb",     "rec709", "acescg",   "acescct",
-                                       "acescc", "aces2065", "dwg",    "dwglinear"};
+                                       "acescc", "aces2065", "dwg",    "dwglinear", "rec709scene"};
                 bool found = false;
-                for (int k = 0; k < 9; ++k)
+                for (int k = 0; k < 10; ++k)
                     if (v == names[k]) {
                         s.space = (ColorSpace)k;
                         found = true;

@@ -47,7 +47,8 @@ Fringe Balance — в том числе на тонких линиях, где �
 | Значение | Обработка |
 |---|---|
 | Linear (Rec.709 primaries) | как есть |
-| sRGB / Rec.709 Gamma 2.4 | декод → линейный Rec.709 → обратно |
+| sRGB / Rec.709 Gamma 2.4 (BT.1886) | декод → линейный Rec.709 → обратно (BT.1886 с нулевым чёрным = степень 2.4) |
+| Rec.709 (Scene) | обратная камерная кривая BT.709 → линейный Rec.709 → обратно |
 | ACEScg | линейный AP1 |
 | ACEScct / ACEScc | декод → ACEScg (AP1) → обратно |
 | ACES2065-1 (AP0) | AP0 → AP1 → обратно |
@@ -59,7 +60,7 @@ Fringe Balance — в том числе на тонких линиях, где �
 (Bradford D65→D60, тем же способом получается эталонная Rec.709→AP1).
 В Resolve: проект ACES → *ACEScct*; DaVinci YRGB Color Managed с широкой гаммой (timeline DaVinci Wide Gamut /
 Intermediate) → *DaVinci Wide Gamut / Intermediate*; DaVinci YRGB без управления цветом → *Rec.709 Gamma 2.4*
-(по умолчанию).
+(по умолчанию); таймлайн или клип в «Rec.709 (Scene)» → *Rec.709 (Scene)*.
 В After Effects: 8/16 бит без линеаризации → *sRGB*, линеаризованный 32 бит → *Linear*, OCIO/ACES → *ACEScg*.
 
 ## Как устроено

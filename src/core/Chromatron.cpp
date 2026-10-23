@@ -203,6 +203,7 @@ void setupColorSpace(CKParams& p, ColorSpace cs)
     switch (cs) {
     case ColorSpace::SRGB: p.transfer = CK_TRANSFER_SRGB; break;
     case ColorSpace::Rec709Gamma24: p.transfer = CK_TRANSFER_GAMMA24; break;
+    case ColorSpace::Rec709Scene: p.transfer = CK_TRANSFER_REC709_SCENE; break;
     case ColorSpace::ACEScct: p.transfer = CK_TRANSFER_ACESCCT; break;
     case ColorSpace::ACEScc: p.transfer = CK_TRANSFER_ACESCC; break;
     case ColorSpace::DWGIntermediate: p.transfer = CK_TRANSFER_DAVINCI_INTERMEDIATE; break;
