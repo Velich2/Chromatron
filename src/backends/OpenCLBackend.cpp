@@ -138,6 +138,8 @@ public:
 
     void submit() override { check(clFlush(queue_), "clFlush"); }
 
+    void finish() override { check(clFinish(queue_), "clFinish"); }
+
 private:
     enum { kImport, kLuma, kBlur, kContrast, kGather, kCount };
 

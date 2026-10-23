@@ -32,6 +32,9 @@ public:
 
     // Hands queued work to the device. Called once per frame, before temporaries are released.
     virtual void submit() {}
+
+    // Blocks until submitted work has finished (tools and tests; plug-ins never wait).
+    virtual void finish() {}
 };
 
 std::unique_ptr<Backend> makeCpuBackend();

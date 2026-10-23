@@ -145,6 +145,12 @@ public:
 
     void submit() override { [cmd_ commit]; }
 
+    void finish() override
+    {
+        [cmd_ waitUntilCompleted];
+        if (cmd_.error) throw std::runtime_error(std::string("Metal: ") + cmd_.error.localizedDescription.UTF8String);
+    }
+
 private:
     void dispatch(id<MTLComputePipelineState> state, int w, int h, void (^bind)(id<MTLComputeCommandEncoder>))
     {

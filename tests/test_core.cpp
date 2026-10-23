@@ -3,6 +3,11 @@
 #include "core/Chromatron.h"
 
 #if CHROMATRON_HAS_OPENCL
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>  // OpenCL.dll is delay-loaded and may be absent
+#endif
 #define CL_TARGET_OPENCL_VERSION 120
 #ifdef __APPLE__
 #include <OpenCL/opencl.h>
@@ -13,10 +18,15 @@
 
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <functional>
 #include <vector>
 
 using namespace chromatron;
+
+#if CHROMATRON_HAS_METAL
+bool chromatronRenderMetal(const Plan& plan, const std::vector<float>& src, std::vector<float>& dst);
+#endif
 
 namespace {
 
@@ -314,6 +324,12 @@ void testDaVinciWideGamut()
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
+#ifdef _WIN32
+    if (!LoadLibraryA("OpenCL.dll")) {
+        std::printf("[skip] no OpenCL runtime\n");
+        return;
+    }
+#endif
     cl_platform_id platform;
     cl_device_id device;
     cl_uint n = 0;
@@ -361,6 +377,40 @@ void testOpenCL()
 }
 #endif
 
+// Same frames as the OpenCL test, run through the real Metal compiler and device.
+#if CHROMATRON_HAS_METAL
+void testMetal()
+{
+    for (int mode = 0; mode < 2; ++mode) {
+        Settings s = aberration();
+        s.mode = (Mode)mode;
+        s.threshold = 0.4;
+        s.distance = 9.0;
+        s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
+        Frame f = neutralChart(96, 64);
+        const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
+        for (size_t i = 0; i < f.px.size(); i += 4)
+            for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(transfer, f.px[i + c]);
+        const Geometry g = fullGeometry(f.w, f.h);
+        const std::vector<float> ref = runCpu(s, g, f.px);
+        std::vector<float> out(f.px.size());
+        try {
+            if (!chromatronRenderMetal(buildPlan(s, g), f.px, out)) {
+                std::printf("[skip] no Metal device\n");
+                return;
+            }
+            const float d = maxDiff(ref, out);
+            char what[96];
+            std::snprintf(what, sizeof(what), "Metal matches CPU, mode %d (max diff %.2g)", mode, d);
+            expect(d < 2e-3f, what);
+        } catch (const std::exception& e) {
+            std::printf("%s\n", e.what());
+            expect(false, "Metal backend runs");
+        }
+    }
+}
+#endif
+
 }  // namespace
 
 int main()
@@ -375,6 +425,9 @@ int main()
     testDaVinciWideGamut();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
+#endif
+#if CHROMATRON_HAS_METAL
+    testMetal();
 #endif
     std::printf(failures ? "%d failure(s)\n" : "all passed\n", failures);
     return failures ? 1 : 0;

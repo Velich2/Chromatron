@@ -103,6 +103,8 @@ public:
         check(cudaGetLastError(), "k_gather");
     }
 
+    void finish() override { check(cudaStreamSynchronize(stream_), "cudaStreamSynchronize"); }
+
 private:
     static dim3 block() { return dim3(16, 16); }
     static dim3 grid(int w, int h) { return dim3((unsigned)(w + 15) / 16, (unsigned)(h + 15) / 16); }

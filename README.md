@@ -111,6 +111,11 @@ ctest --test-dir build
 build/chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 8 --blur 2 --threshold 0.5
 ```
 
+## CI
+GitHub Actions (`.github/workflows/build.yml`) на каждый PR собирает и тестирует проект на Linux (CPU + OpenCL на
+pocl), Windows (CPU + CUDA + OpenCL) и macOS (CPU + Metal, universal). Готовые OFX-бандлы для каждой платформы
+лежат в артефактах запуска. After Effects в CI не собирается: SDK Adobe нельзя выкладывать в репозиторий.
+
 ## Статус проверки
 * Ядра, CPU-бэкенд, OpenCL-бэкенд (на pocl) — собраны и протестированы, OpenCL совпадает с CPU.
 * OFX-модуль собирается на Linux, экспортирует точки входа и регистрирует плагин.
