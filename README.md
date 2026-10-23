@@ -88,6 +88,15 @@ cmake --install build      # Chromatron.ofx.bundle → папка OFX-плаги
 OpenFX SDK скачивается автоматически (тег `OFX_Release_1.5.1`) или задаётся `-DOFX_SDK_DIR=...`.
 CUDA собирается, если найден CUDA Toolkit (Windows/Linux); OpenCL — если найден OpenCL SDK; Metal — на macOS.
 
+**Windows одной командой** — `build_windows.bat` (нужны Visual Studio 2022 с *Desktop development with C++*,
+Git, по желанию CUDA Toolkit). Скрипт сам находит Visual Studio и папку After Effects SDK
+(по умолчанию `C:\Users\Velich\AfterEffectsSDK_26.5_win`, переопределяется переменной `AE_SDK_ROOT`),
+собирает AE и OFX в Release и запускает тесты:
+```
+build_windows.bat            :: сборка + тесты
+build_windows.bat install    :: + установка плагинов (консоль от администратора)
+```
+
 **After Effects** (Windows, macOS) — нужен After Effects SDK от Adobe (не распространяется):
 ```
 cmake -S . -B build -DCHROMATRON_BUILD_AE=ON -DAE_SDK_DIR=/path/to/AfterEffectsSDK
