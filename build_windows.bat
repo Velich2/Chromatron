@@ -1,8 +1,9 @@
 @echo off
 rem Chromatron - Windows build: After Effects (.aex) + OpenFX for Resolve (.ofx.bundle).
 rem
-rem   build_windows.bat            configure, build Release, run tests
-rem   build_windows.bat install    same, then install the plug-ins (run as administrator)
+rem   build_windows.bat            configure, build Release, run tests, install the plug-ins
+rem                                (run as administrator: writes to Program Files)
+rem   build_windows.bat noinstall  build and test only
 rem
 rem Override the SDK location without editing:  set AE_SDK_ROOT=D:\path\to\sdk
 
@@ -84,11 +85,14 @@ echo.
 echo After Effects: %BUILD_DIR%\AfterEffects\Chromatron.aex
 echo Resolve (OFX): %BUILD_DIR%\Chromatron.ofx.bundle
 
-if /i "%~1"=="install" (
-    cmake --install "%BUILD_DIR%" --config Release
-    if errorlevel 1 (
-        echo ERROR: install failed - run this script as administrator.
-        exit /b 1
-    )
+rem --- Install: .aex into Adobe MediaCore, .ofx.bundle into Common Files\OFX\Plugins ---
+if /i "%~1"=="noinstall" exit /b 0
+cmake --install "%BUILD_DIR%" --config Release
+if errorlevel 1 (
+    echo ERROR: install failed - run this script as administrator.
+    echo Close After Effects / Resolve if they are running ^(the plug-in file may be locked^).
+    exit /b 1
 )
+echo.
+echo Installed. Restart After Effects / Resolve to load the plug-in.
 exit /b 0

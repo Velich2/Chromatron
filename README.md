@@ -91,10 +91,12 @@ CUDA собирается, если найден CUDA Toolkit (Windows/Linux); O
 **Windows одной командой** — `build_windows.bat` (нужны Visual Studio 2022 или 2026 с *Desktop development with C++*,
 Git, по желанию CUDA Toolkit). Скрипт сам находит Visual Studio и папку After Effects SDK
 (по умолчанию `C:\Users\Velich\AfterEffectsSDK_26.5_win`, переопределяется переменной `AE_SDK_ROOT`),
-собирает AE и OFX в Release и запускает тесты:
+собирает AE и OFX в Release, запускает тесты и сразу устанавливает плагины: `Chromatron.aex` в
+`C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore`, `Chromatron.ofx.bundle` в
+`C:\Program Files\Common Files\OFX\Plugins`. Запускать из консоли от администратора, при закрытых After Effects и Resolve:
 ```
-build_windows.bat            :: сборка + тесты
-build_windows.bat install    :: + установка плагинов (консоль от администратора)
+build_windows.bat              :: сборка + тесты + установка
+build_windows.bat noinstall    :: только сборка и тесты
 ```
 
 **After Effects** (Windows, macOS) — нужен After Effects SDK от Adobe (не распространяется):
