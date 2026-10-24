@@ -160,7 +160,7 @@ private:
     {
         Inputs inputs;
         for (int index = P_INPUT + 1; index < P_NUM_PARAMS; ++index) {
-            if (IsGroup(index)) continue;
+            if (!HasValue(index)) continue;
             const PrParam p = GetParam(index, time);
             if (index == P_CENTER) {
                 SetParam(index, p.mPoint.x * width - 0.5, p.mPoint.y * height - 0.5, inputs);

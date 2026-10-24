@@ -62,7 +62,12 @@ enum {
     ID_FOCUS,
     ID_PHYS_END,
     ID_MASK_START,
-    ID_MASK_END
+    ID_MASK_END,
+    ID_SEP_RESET,
+    ID_ABR_RESET,
+    ID_PHYS_RESET,
+    ID_MASK_RESET,
+    ID_OPTICS_RESET
 };  // ID_SAMPLES is retired (Spectral Samples is automatic now)
 
 // Scoped PICA suite acquisition.
@@ -146,68 +151,84 @@ PF_Err GlobalSetup(PF_InData* in, PF_OutData* out)
     return err;
 }
 
+// Defaults, used by ParamsSetup and by the groups' Reset buttons.
+namespace dflt {
+constexpr A_long kMode = 1, kPair = 4, kCorrection = 1;
+constexpr double kAngle = 45, kDistance = 2, kSpread = 0.25;
+constexpr double kLateral = 5, kBalance = 0;
+constexpr double kLateralColor = 4, kAxialColor = 3, kFocus = 550;
+constexpr double kThreshold = 0, kSoftness = 0.5;
+constexpr PF_Boolean kShowMask = FALSE;
+constexpr double kCenterPercent = 50, kBlur = 0, kMix = 100;
+}  // namespace dflt
+
 PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
 {
     PF_Err err = PF_Err_NONE;
     PF_ParamDef def;
 
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Mode", 3, 1, "RGB Separation|Lens Aberration|Physical Lens", ID_MODE);
+    PF_ADD_POPUP("Mode", 3, dflt::kMode, "RGB Separation|Lens Aberration|Physical Lens", ID_MODE);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("RGB Separation", ID_SEP_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Pair", 4, 4, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
+    PF_ADD_POPUP("Color Pair", 4, dflt::kPair, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_ANGLE("Angle", 45, ID_ANGLE);
+    PF_ADD_ANGLE("Angle", dflt::kAngle, ID_ANGLE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Distance", 0, 2000, 0, 60, 2, PF_Precision_TENTHS, 0, 0, ID_DISTANCE);
+    PF_ADD_FLOAT_SLIDERX("Distance", 0, 2000, 0, 60, dflt::kDistance, PF_Precision_TENTHS, 0, 0, ID_DISTANCE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Spread", 0, 1, 0, 1, 0.25, PF_Precision_HUNDREDTHS, 0, 0, ID_SPREAD);
+    PF_ADD_FLOAT_SLIDERX("Spread", 0, 1, 0, 1, dflt::kSpread, PF_Precision_HUNDREDTHS, 0, 0, ID_SPREAD);
+    PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_SEP_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_SEP_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Lens Aberration", ID_ABR_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Lateral", -500, 500, -40, 40, 5, PF_Precision_TENTHS, 0, 0, ID_LATERAL);
+    PF_ADD_FLOAT_SLIDERX("Lateral", -500, 500, -40, 40, dflt::kLateral, PF_Precision_TENTHS, 0, 0, ID_LATERAL);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Fringe Balance", -1, 1, -1, 1, 0, PF_Precision_HUNDREDTHS, 0, 0, ID_BALANCE);
+    PF_ADD_FLOAT_SLIDERX("Fringe Balance", -1, 1, -1, 1, dflt::kBalance, PF_Precision_HUNDREDTHS, 0, 0, ID_BALANCE);
+    PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_ABR_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_ABR_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Physical Lens", ID_PHYS_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Correction", 3, 1, "Singlet (uncorrected)|Achromat|Apochromat", ID_CORRECTION);
+    PF_ADD_POPUP("Correction", 3, dflt::kCorrection, "Singlet (uncorrected)|Achromat|Apochromat", ID_CORRECTION);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Lateral Color", -500, 500, -40, 40, 4, PF_Precision_TENTHS, 0, 0, ID_LATERAL_COLOR);
+    PF_ADD_FLOAT_SLIDERX("Lateral Color", -500, 500, -40, 40, dflt::kLateralColor, PF_Precision_TENTHS, 0, 0, ID_LATERAL_COLOR);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Axial Color", 0, 200, 0, 20, 3, PF_Precision_TENTHS, 0, 0, ID_AXIAL_COLOR);
+    PF_ADD_FLOAT_SLIDERX("Axial Color", 0, 200, 0, 20, dflt::kAxialColor, PF_Precision_TENTHS, 0, 0, ID_AXIAL_COLOR);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Focus Wavelength", 400, 700, 400, 700, 550, PF_Precision_INTEGER, 0, 0, ID_FOCUS);
+    PF_ADD_FLOAT_SLIDERX("Focus Wavelength", 400, 700, 400, 700, dflt::kFocus, PF_Precision_INTEGER, 0, 0, ID_FOCUS);
+    PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_PHYS_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_PHYS_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Edge Mask", ID_MASK_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Contrast Threshold", 0, 1, 0, 1, 0, PF_Precision_HUNDREDTHS, 0, 0, ID_THRESHOLD);
+    PF_ADD_FLOAT_SLIDERX("Contrast Threshold", 0, 1, 0, 1, dflt::kThreshold, PF_Precision_HUNDREDTHS, 0, 0, ID_THRESHOLD);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Threshold Softness", 0, 1, 0, 1, 0.5, PF_Precision_HUNDREDTHS, 0, 0, ID_SOFTNESS);
+    PF_ADD_FLOAT_SLIDERX("Threshold Softness", 0, 1, 0, 1, dflt::kSoftness, PF_Precision_HUNDREDTHS, 0, 0, ID_SOFTNESS);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_CHECKBOXX("Show Mask", FALSE, 0, ID_SHOW_MASK);
+    PF_ADD_CHECKBOXX("Show Mask", dflt::kShowMask, 0, ID_SHOW_MASK);
+    PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_MASK_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_MASK_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Optics", ID_OPTICS_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POINT("Optical Center", 50, 50, FALSE, ID_CENTER);
+    PF_ADD_POINT("Optical Center", dflt::kCenterPercent, dflt::kCenterPercent, FALSE, ID_CENTER);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Fringe Blur", 0, 200, 0, 20, 0, PF_Precision_TENTHS, 0, 0, ID_BLUR);
+    PF_ADD_FLOAT_SLIDERX("Fringe Blur", 0, 200, 0, 20, dflt::kBlur, PF_Precision_TENTHS, 0, 0, ID_BLUR);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIX);
+    PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, dflt::kMix, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIX);
+    PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_OPTICS_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_OPTICS_END);
 
@@ -258,6 +279,44 @@ cx::Settings ResolveSettings(const Inputs& inputs, bool floatWorld)
     return s;
 }
 
+// Reset button of a group: its parameters go back to their defaults (at the current time,
+// so animated parameters get a keyframe, as when the user types the value).
+PF_Err UserChangedParam(PF_InData* in, PF_OutData* out, PF_ParamDef* params[], const PF_UserChangedParamExtra* extra)
+{
+    const Group* group = nullptr;
+    for (const Group& g : kGroups)
+        if (extra->param_index == g.reset) group = &g;
+    if (!group) return PF_Err_NONE;
+    for (int i = group->start + 1; i < group->reset; ++i) {
+        PF_ParamDef& d = *params[i];
+        switch (i) {
+        case P_PAIR: d.u.pd.value = dflt::kPair; break;
+        case P_ANGLE: d.u.ad.value = FLOAT2FIX(dflt::kAngle); break;
+        case P_DISTANCE: d.u.fs_d.value = dflt::kDistance; break;
+        case P_SPREAD: d.u.fs_d.value = dflt::kSpread; break;
+        case P_LATERAL: d.u.fs_d.value = dflt::kLateral; break;
+        case P_BALANCE: d.u.fs_d.value = dflt::kBalance; break;
+        case P_CORRECTION: d.u.pd.value = dflt::kCorrection; break;
+        case P_LATERAL_COLOR: d.u.fs_d.value = dflt::kLateralColor; break;
+        case P_AXIAL_COLOR: d.u.fs_d.value = dflt::kAxialColor; break;
+        case P_FOCUS: d.u.fs_d.value = dflt::kFocus; break;
+        case P_THRESHOLD: d.u.fs_d.value = dflt::kThreshold; break;
+        case P_SOFTNESS: d.u.fs_d.value = dflt::kSoftness; break;
+        case P_SHOW_MASK: d.u.bd.value = dflt::kShowMask; break;
+        case P_CENTER:  // percent of the layer, in layer pixels
+            d.u.td.x_value = FLOAT2FIX(in->width * dflt::kCenterPercent / 100.0);
+            d.u.td.y_value = FLOAT2FIX(in->height * dflt::kCenterPercent / 100.0);
+            break;
+        case P_BLUR: d.u.fs_d.value = dflt::kBlur; break;
+        case P_MIX: d.u.fs_d.value = dflt::kMix; break;
+        default: continue;
+        }
+        d.uu.change_flags |= PF_ChangeFlag_CHANGED_VALUE;
+    }
+    out->out_flags |= PF_OutFlag_FORCE_RERENDER;
+    return PF_Err_NONE;
+}
+
 void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
 {
     switch (index) {
@@ -288,7 +347,7 @@ PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
 {
     PF_Err err = PF_Err_NONE;
     for (int index = P_INPUT + 1; index < P_NUM_PARAMS && !err; ++index) {
-        if (IsGroup(index)) continue;
+        if (!HasValue(index)) continue;
         PF_ParamDef def;
         AEFX_CLR_STRUCT(def);
         err = PF_CHECKOUT_PARAM(in_data, index, in_data->current_time, in_data->time_step, in_data->time_scale, &def);
@@ -614,6 +673,8 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutDat
             return ParamsSetup(in_data, out_data);
         case PF_Cmd_UPDATE_PARAMS_UI:
             return UpdateParamsUI(in_data, out_data, params);
+        case PF_Cmd_USER_CHANGED_PARAM:
+            return UserChangedParam(in_data, out_data, params, static_cast<const PF_UserChangedParamExtra*>(extra));
         case PF_Cmd_RENDER:
             if (in_data->appl_id != kPremiere) return PF_Err_NONE;  // After Effects always uses SmartFX
             return PremiereRender(in_data, out_data, params, output);

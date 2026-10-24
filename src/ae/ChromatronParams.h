@@ -19,38 +19,54 @@ enum {
     P_ANGLE,
     P_DISTANCE,
     P_SPREAD,
+    P_SEP_RESET,
     P_SEP_END,
     P_ABR_START,
     P_LATERAL,
     P_BALANCE,
+    P_ABR_RESET,
     P_ABR_END,
     P_PHYS_START,
     P_CORRECTION,
     P_LATERAL_COLOR,
     P_AXIAL_COLOR,
     P_FOCUS,
+    P_PHYS_RESET,
     P_PHYS_END,
     P_MASK_START,
     P_THRESHOLD,
     P_SOFTNESS,
     P_SHOW_MASK,
+    P_MASK_RESET,
     P_MASK_END,
     P_OPTICS_START,
     P_CENTER,
     P_BLUR,
     P_MIX,
+    P_OPTICS_RESET,
     P_OPTICS_END,
     P_USE_GPU,
     P_SPACE,
     P_NUM_PARAMS
 };
 
-// Topic start / end entries carry no value.
-inline bool IsGroup(int index)
+// Each group: its start, the parameters inside, its Reset button, its end.
+struct Group {
+    int start, reset;
+};
+constexpr Group kGroups[] = {{P_SEP_START, P_SEP_RESET},
+                             {P_ABR_START, P_ABR_RESET},
+                             {P_PHYS_START, P_PHYS_RESET},
+                             {P_MASK_START, P_MASK_RESET},
+                             {P_OPTICS_START, P_OPTICS_RESET}};
+
+// The input layer, group starts / ends and Reset buttons carry no value.
+inline bool HasValue(int index)
 {
-    return index == P_SEP_START || index == P_SEP_END || index == P_ABR_START || index == P_ABR_END ||
-           index == P_PHYS_START || index == P_PHYS_END || index == P_MASK_START || index == P_MASK_END ||
-           index == P_OPTICS_START || index == P_OPTICS_END;
+    if (index <= P_INPUT || index >= P_NUM_PARAMS) return false;
+    for (const Group& g : kGroups)
+        if (index == g.start || index == g.reset || index == g.reset + 1) return false;
+    return true;
 }
 
 // Every parameter at the current time (SmartFX and the GPU filter get no params[] array).

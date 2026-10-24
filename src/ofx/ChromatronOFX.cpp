@@ -45,6 +45,11 @@ const char* const kShowMask = "showMask";
 const char* const kBlur = "channelBlur";  // shown as Fringe Blur
 const char* const kMix = "mix";
 const char* const kUseGpu = "useGpu";
+const char* const kResetSeparation = "resetSeparation";
+const char* const kResetAberration = "resetAberration";
+const char* const kResetPhysical = "resetPhysical";
+const char* const kResetMask = "resetMask";
+const char* const kResetOptics = "resetOptics";
 
 class ChromatronPlugin : public ImageEffect {
 public:
@@ -87,9 +92,40 @@ public:
     void changedParam(const InstanceChangedArgs&, const std::string& name) override
     {
         if (name == kMode) updateEnabled();
+        else if (name == kResetSeparation) reset("Reset RGB Separation", pair_, angle_, distance_, spread_);
+        else if (name == kResetAberration) reset("Reset Lens Aberration", lateral_, balance_);
+        else if (name == kResetPhysical) reset("Reset Physical Lens", correction_, lateralColor_, axialColor_, focus_);
+        else if (name == kResetMask) reset("Reset Edge Mask", threshold_, softness_, showMask_);
+        else if (name == kResetOptics) reset("Reset Optics", center_, blur_, mix_);
     }
 
 private:
+    // A group's Reset button: its parameters back to their defaults, as one undo step.
+    template <class... P>
+    void reset(const char* label, P*... params)
+    {
+        beginEditBlock(label);
+        (resetParam(params), ...);
+        endEditBlock();
+    }
+    template <class P>
+    static void resetParam(P* p)
+    {
+        p->setValue(p->getDefault());
+    }
+    static void resetParam(ChoiceParam* p)  // ChoiceParam has only getDefault(int&)
+    {
+        int v = 0;
+        p->getDefault(v);
+        p->setValue(v);
+    }
+    static void resetParam(Double2DParam* p)
+    {
+        double x = 0.0, y = 0.0;
+        p->getDefault(x, y);
+        p->setValue(x, y);
+    }
+
     cx::Settings settingsAt(double t) const
     {
         cx::Settings s;
@@ -353,6 +389,11 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                  60.0, sep, page);
     defineDouble(desc, kSpread, "Spread", "0 = hard digital offset, 1 = soft prism-like smear.", 0.25, 0.0, 1.0, 0.0,
                  1.0, sep, page);
+    PushButtonParamDescriptor* kResetSeparationButton = desc.definePushButtonParam(kResetSeparation);
+    kResetSeparationButton->setLabels("Reset", "Reset", "Reset");
+    kResetSeparationButton->setHint("Set this group's parameters back to their defaults.");
+    kResetSeparationButton->setParent(*sep);
+    page->addChild(*kResetSeparationButton);
 
     GroupParamDescriptor* abr = defineGroup(desc, "aberrationGroup", "Lens Aberration", page);
     defineDouble(desc, kLateral, "Lateral", "Spread of the spectrum at the frame corner, pixels. Negative swaps sides.",
@@ -360,6 +401,11 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     defineDouble(desc, kBalance, "Fringe Balance",
                  "-1 red-orange / cyan, 0 orange / teal, +1 golden / azure. Never magenta, purple or green.", 0.0,
                  -1.0, 1.0, -1.0, 1.0, abr, page);
+    PushButtonParamDescriptor* kResetAberrationButton = desc.definePushButtonParam(kResetAberration);
+    kResetAberrationButton->setLabels("Reset", "Reset", "Reset");
+    kResetAberrationButton->setHint("Set this group's parameters back to their defaults.");
+    kResetAberrationButton->setParent(*abr);
+    page->addChild(*kResetAberrationButton);
 
     GroupParamDescriptor* phys = defineGroup(desc, "physicalGroup", "Physical Lens", page);
     ChoiceParamDescriptor* correction = desc.defineChoiceParam(kCorrection);
@@ -380,6 +426,11 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                  0.0, 200.0, 0.0, 20.0, phys, page);
     defineDouble(desc, kFocus, "Focus Wavelength", "Wavelength in perfect focus, nm.", 550.0, 400.0, 700.0, 400.0,
                  700.0, phys, page);
+    PushButtonParamDescriptor* kResetPhysicalButton = desc.definePushButtonParam(kResetPhysical);
+    kResetPhysicalButton->setLabels("Reset", "Reset", "Reset");
+    kResetPhysicalButton->setHint("Set this group's parameters back to their defaults.");
+    kResetPhysicalButton->setParent(*phys);
+    page->addChild(*kResetPhysicalButton);
 
     GroupParamDescriptor* mask = defineGroup(desc, "maskGroup", "Edge Mask", page);
     defineDouble(desc, kThreshold, "Contrast Threshold",
@@ -394,6 +445,11 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     showMask->setDefault(false);
     showMask->setParent(*mask);
     page->addChild(*showMask);
+    PushButtonParamDescriptor* kResetMaskButton = desc.definePushButtonParam(kResetMask);
+    kResetMaskButton->setLabels("Reset", "Reset", "Reset");
+    kResetMaskButton->setHint("Set this group's parameters back to their defaults.");
+    kResetMaskButton->setParent(*mask);
+    page->addChild(*kResetMaskButton);
 
     GroupParamDescriptor* optics = defineGroup(desc, "opticsGroup", "Optics", page);
     Double2DParamDescriptor* center = desc.defineDouble2DParam(kCenter);
@@ -407,6 +463,11 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     defineDouble(desc, kBlur, "Fringe Blur", "Softens the colour of the fringes, pixels; image detail stays sharp.",
                  0.0, 0.0, 200.0, 0.0, 20.0, optics, page);
     defineDouble(desc, kMix, "Mix", "Blend with the original.", 1.0, 0.0, 1.0, 0.0, 1.0, optics, page);
+    PushButtonParamDescriptor* kResetOpticsButton = desc.definePushButtonParam(kResetOptics);
+    kResetOpticsButton->setLabels("Reset", "Reset", "Reset");
+    kResetOpticsButton->setHint("Set this group's parameters back to their defaults.");
+    kResetOpticsButton->setParent(*optics);
+    page->addChild(*kResetOpticsButton);
 
     BooleanParamDescriptor* useGpu = desc.defineBooleanParam(kUseGpu);
     useGpu->setLabels("Use GPU", "Use GPU", "Use GPU");
