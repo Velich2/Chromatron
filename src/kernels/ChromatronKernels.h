@@ -85,7 +85,12 @@ typedef struct CKParams {
     float maskLow;    // smoothstep edges applied to local light contrast
     float maskHigh;
     float invHalfDiagonal; // aberration: blur grows with field radius (0 at the optical centre)
-    float toWork[9];      // host -> working primaries (row-major), when useMatrix
+    float falloff;    // lens modes: the effect grows as (radius / half diagonal)^falloff
+    float anaX;       // lens modes: share of the displacement kept along x and y (Anamorphic)
+    float anaY;
+    float saturation; // Fringe Saturation: gain of the colour the dispersion adds
+    float highlightGain; // Highlight Boost: white (1.0) becomes this bright for the optics; 1 = off
+    float toWork[9];     // host -> working primaries (row-major), when useMatrix
     float fromWork[9];    // working -> host primaries
     float tapT[CK_MAX_TAPS];      // displacement factor of each spectral tap
     float tapLevel[CK_MAX_TAPS];  // blur level coordinate (0 .. numLevels-1), at the frame corner in the lens modes
@@ -116,7 +121,7 @@ typedef struct CKPix {
 #include <cstring>
 #define CK_FN static inline
 #define CK_G
-#define CK_PARAMS const CKParams&
+#define CK_PARAMS const CKParams*
 #define CK_BPARAMS const CKBlurParams&
 #define ck_expf(x) std::exp(x)
 #define ck_floorf(x) std::floor(x)
@@ -169,7 +174,7 @@ static inline uint16_t ck_float_to_half(float f)
 #include <cuda_fp16.h>
 #define CK_FN static __device__ __forceinline__
 #define CK_G
-#define CK_PARAMS const CKParams&
+#define CK_PARAMS const CKParams*
 #define CK_BPARAMS const CKBlurParams&
 #define ck_expf(x) expf(x)
 #define ck_floorf(x) floorf(x)
@@ -185,7 +190,7 @@ static inline uint16_t ck_float_to_half(float f)
 #elif defined(CK_OPENCL)
 #define CK_FN static inline
 #define CK_G __global
-#define CK_PARAMS const CKParams
+#define CK_PARAMS __constant CKParams*  // a constant buffer: too large for a by-value kernel argument
 #define CK_BPARAMS const CKBlurParams
 #define ck_expf(x) exp(x)
 #define ck_floorf(x) floor(x)
@@ -202,7 +207,7 @@ static inline uint16_t ck_float_to_half(float f)
 #elif defined(CK_METAL)
 #define CK_FN static inline
 #define CK_G device
-#define CK_PARAMS constant CKParams&
+#define CK_PARAMS constant CKParams*
 #define CK_BPARAMS constant CKBlurParams&
 #define ck_expf(x) exp(x)
 #define ck_floorf(x) floor(x)
@@ -220,18 +225,21 @@ static inline uint16_t ck_float_to_half(float f)
 // Channel value i of a host buffer, stored as float or half (CKParams.hostHalf).
 CK_FN float ck_ld(CK_PARAMS p, CK_G const float* img, int i)
 {
-    return p.hostHalf ? ck_load_half(img, i) : img[i];
+    return p->hostHalf ? ck_load_half(img, i) : img[i];
 }
 
 CK_FN void ck_st(CK_PARAMS p, CK_G float* img, int i, float v)
 {
-    if (p.hostHalf) ck_store_half(img, i, v);
+    if (p->hostHalf) ck_store_half(img, i, v);
     else img[i] = v;
 }
 
 CK_FN int ck_clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 CK_FN float ck_clampf(float v, float lo, float hi) { return ck_fminf(ck_fmaxf(v, lo), hi); }
+
+// Largest gain k that keeps m + d * k from going below zero.
+CK_FN float ck_gain_limit(float m, float d) { return d < 0.0f ? ck_fmaxf(m, 0.0f) / -d : 1e30f; }
 
 CK_FN float ck_smooth(float e0, float e1, float x)
 {
@@ -250,12 +258,12 @@ CK_FN int ck_chan(int order, int c)
 CK_FN CKPix ck_fetch(CK_G const float* img, int w, int x, int y)
 {
     const int i = (y * w + x) * 4;
-    CKPix p;
-    p.r = img[i + 0];
-    p.g = img[i + 1];
-    p.b = img[i + 2];
-    p.a = img[i + 3];
-    return p;
+    CKPix q;
+    q.r = img[i + 0];
+    q.g = img[i + 1];
+    q.b = img[i + 2];
+    q.a = img[i + 3];
+    return q;
 }
 
 // Bilinear fetch from a packed RGBA buffer; pixel centres sit on integer coordinates,
@@ -278,12 +286,12 @@ CK_FN CKPix ck_bilinear(CK_G const float* img, int w, int h, float fx, float fy)
     const float wb = tx * (1.0f - ty);
     const float wc = (1.0f - tx) * ty;
     const float wd = tx * ty;
-    CKPix p;
-    p.r = a.r * wa + b.r * wb + c.r * wc + d.r * wd;
-    p.g = a.g * wa + b.g * wb + c.g * wc + d.g * wd;
-    p.b = a.b * wa + b.b * wb + c.b * wc + d.b * wd;
-    p.a = a.a * wa + b.a * wb + c.a * wc + d.a * wd;
-    return p;
+    CKPix q;
+    q.r = a.r * wa + b.r * wb + c.r * wc + d.r * wd;
+    q.g = a.g * wa + b.g * wb + c.g * wc + d.g * wd;
+    q.b = a.b * wa + b.b * wb + c.b * wc + d.b * wd;
+    q.a = a.a * wa + b.a * wb + c.a * wc + d.a * wd;
+    return q;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,36 +357,69 @@ CK_FN float ck_encode(int transfer, float l)
 }
 
 // ---------------------------------------------------------------------------
+// Highlight Boost. Clipped footage has lost how bright its highlights were, so a
+// fringe would only dim the white next to it (a dirty yellow-green tint) instead of
+// spilling light. Per channel, like the clipping itself: values above the knee are
+// expanded before the optics (white -> gain, quadratic and C1 at the knee, values
+// above white scaled by the gain) and compressed back by the exact inverse after.
+// ---------------------------------------------------------------------------
+#define CK_HL_KNEE 0.75f
+
+CK_FN float ck_hl_expand(float gain, float v)
+{
+    if (v <= CK_HL_KNEE) return v;
+    if (v >= 1.0f) return v * gain;
+    const float d = v - CK_HL_KNEE;
+    return v + (gain - 1.0f) / ((1.0f - CK_HL_KNEE) * (1.0f - CK_HL_KNEE)) * d * d;
+}
+
+CK_FN float ck_hl_compress(float gain, float x)
+{
+    if (x <= CK_HL_KNEE) return x;
+    if (x >= gain) return x / gain;
+    const float a = (gain - 1.0f) / ((1.0f - CK_HL_KNEE) * (1.0f - CK_HL_KNEE));
+    const float e = x - CK_HL_KNEE;
+    return CK_HL_KNEE + 2.0f * e / (1.0f + ck_sqrtf(1.0f + 4.0f * a * e));  // root of a d^2 + d = e
+}
+
+// ---------------------------------------------------------------------------
 // Pass 1: host buffer (any order / pitch / encoding) -> packed linear RGBA
 // working buffer in the working primaries.
 // ---------------------------------------------------------------------------
 CK_FN void ck_import(int x, int y, CK_PARAMS p, CK_G const float* src, CK_G float* work)
 {
-    const int s = y * p.srcPitch + x * 4;
-    const int d = (y * p.srcWidth + x) * 4;
-    const float a = ck_ld(p, src, s + ck_chan(p.srcOrder, 3));
-    float r = ck_ld(p, src, s + ck_chan(p.srcOrder, 0));
-    float g = ck_ld(p, src, s + ck_chan(p.srcOrder, 1));
-    float b = ck_ld(p, src, s + ck_chan(p.srcOrder, 2));
-    // Premultiplied input: the transfer curve applies to the colour, so divide alpha out
-    // first and associate again in linear light (otherwise soft edges get dark halos).
-    const bool assoc = p.premultiplied && p.transfer != CK_TRANSFER_LINEAR && a > 1e-6f;
+    const int s = y * p->srcPitch + x * 4;
+    const int d = (y * p->srcWidth + x) * 4;
+    const float a = ck_ld(p, src, s + ck_chan(p->srcOrder, 3));
+    float r = ck_ld(p, src, s + ck_chan(p->srcOrder, 0));
+    float g = ck_ld(p, src, s + ck_chan(p->srcOrder, 1));
+    float b = ck_ld(p, src, s + ck_chan(p->srcOrder, 2));
+    // Premultiplied input: the transfer curve and the highlight expansion apply to the colour,
+    // so divide alpha out first and associate again in linear light (otherwise soft edges get
+    // dark halos).
+    const bool boost = p->highlightGain > 1.0f;
+    const bool assoc = p->premultiplied && (p->transfer != CK_TRANSFER_LINEAR || boost) && a > 1e-6f;
     const float ia = assoc ? 1.0f / a : 1.0f;
     const float ka = assoc ? a : 1.0f;
-    r = ck_decode(p.transfer, r * ia) * ka;
-    g = ck_decode(p.transfer, g * ia) * ka;
-    b = ck_decode(p.transfer, b * ia) * ka;
-    if (p.useMatrix) {
-        const float wr = p.toWork[0] * r + p.toWork[1] * g + p.toWork[2] * b;
-        const float wg = p.toWork[3] * r + p.toWork[4] * g + p.toWork[5] * b;
-        const float wb = p.toWork[6] * r + p.toWork[7] * g + p.toWork[8] * b;
+    r = ck_decode(p->transfer, r * ia);
+    g = ck_decode(p->transfer, g * ia);
+    b = ck_decode(p->transfer, b * ia);
+    if (p->useMatrix) {
+        const float wr = p->toWork[0] * r + p->toWork[1] * g + p->toWork[2] * b;
+        const float wg = p->toWork[3] * r + p->toWork[4] * g + p->toWork[5] * b;
+        const float wb = p->toWork[6] * r + p->toWork[7] * g + p->toWork[8] * b;
         r = wr;
         g = wg;
         b = wb;
     }
-    work[d + 0] = r;
-    work[d + 1] = g;
-    work[d + 2] = b;
+    if (boost) {
+        r = ck_hl_expand(p->highlightGain, r);
+        g = ck_hl_expand(p->highlightGain, g);
+        b = ck_hl_expand(p->highlightGain, b);
+    }
+    work[d + 0] = r * ka;
+    work[d + 1] = g * ka;
+    work[d + 2] = b * ka;
     work[d + 3] = a;
 }
 
@@ -395,8 +436,8 @@ CK_FN float ck_tone(float v)
 
 CK_FN void ck_luma(int x, int y, CK_PARAMS p, CK_G const float* work, CK_G float* luma)
 {
-    const int i = y * p.srcWidth + x;
-    luma[i] = ck_tone(p.lumR * work[i * 4 + 0] + p.lumG * work[i * 4 + 1] + p.lumB * work[i * 4 + 2]);
+    const int i = y * p->srcWidth + x;
+    luma[i] = ck_tone(p->lumR * work[i * 4 + 0] + p->lumG * work[i * 4 + 1] + p->lumB * work[i * 4 + 2]);
 }
 
 // Index of the sample i pixels away along the pass direction (clamp-to-edge).
@@ -466,14 +507,14 @@ CK_FN void ck_blur(int x, int y, CK_BPARAMS b, CK_G const float* src, CK_G float
 CK_FN void ck_contrast(int x, int y, CK_PARAMS p, CK_G const float* luma, CK_G const float* lumaBlur,
                        CK_G float* mask)
 {
-    const int i = y * p.srcWidth + x;
+    const int i = y * p->srcWidth + x;
     const float l = luma[i];
     const float lb = lumaBlur[i];
     // Tone-compressed luma reaches 1.0 at diffuse white and 1.5 at extreme highlights,
     // so HDR sources keep passing the threshold after diffuse edges have dropped out.
     const float light = ck_fmaxf(l, lb);
     const float e = 1.4f * ck_fabsf(l - lb) * (0.15f + 0.85f * light * light);
-    mask[i] = ck_smooth(p.maskLow, p.maskHigh, e);
+    mask[i] = ck_smooth(p->maskLow, p->maskHigh, e);
 }
 
 CK_FN CK_G const float* ck_level(int l, CK_G const float* L0, CK_G const float* L1, CK_G const float* L2,
@@ -485,30 +526,39 @@ CK_FN CK_G const float* ck_level(int l, CK_G const float* L0, CK_G const float* 
 // Writes a pixel as is (used for the mask view).
 CK_FN void ck_write(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix v)
 {
-    const int o = (y + p.dstBaseY) * p.dstPitch + (x + p.dstBaseX) * 4;
-    ck_st(p, dst, o + ck_chan(p.dstOrder, 0), v.r);
-    ck_st(p, dst, o + ck_chan(p.dstOrder, 1), v.g);
-    ck_st(p, dst, o + ck_chan(p.dstOrder, 2), v.b);
-    ck_st(p, dst, o + ck_chan(p.dstOrder, 3), v.a);
+    const int o = (y + p->dstBaseY) * p->dstPitch + (x + p->dstBaseX) * 4;
+    ck_st(p, dst, o + ck_chan(p->dstOrder, 0), v.r);
+    ck_st(p, dst, o + ck_chan(p->dstOrder, 1), v.g);
+    ck_st(p, dst, o + ck_chan(p->dstOrder, 2), v.b);
+    ck_st(p, dst, o + ck_chan(p->dstOrder, 3), v.a);
 }
 
 // Converts a working-space pixel back to the host's primaries and encoding.
 CK_FN void ck_store(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix v)
 {
-    if (p.useMatrix) {
-        const float r = p.fromWork[0] * v.r + p.fromWork[1] * v.g + p.fromWork[2] * v.b;
-        const float g = p.fromWork[3] * v.r + p.fromWork[4] * v.g + p.fromWork[5] * v.b;
-        const float b = p.fromWork[6] * v.r + p.fromWork[7] * v.g + p.fromWork[8] * v.b;
+    const bool boost = p->highlightGain > 1.0f;
+    const bool assoc = p->premultiplied && (p->transfer != CK_TRANSFER_LINEAR || boost) && v.a > 1e-6f;
+    const float ia = assoc ? 1.0f / v.a : 1.0f;
+    const float ka = assoc ? v.a : 1.0f;
+    v.r *= ia;
+    v.g *= ia;
+    v.b *= ia;
+    if (boost) {
+        v.r = ck_hl_compress(p->highlightGain, v.r);
+        v.g = ck_hl_compress(p->highlightGain, v.g);
+        v.b = ck_hl_compress(p->highlightGain, v.b);
+    }
+    if (p->useMatrix) {
+        const float r = p->fromWork[0] * v.r + p->fromWork[1] * v.g + p->fromWork[2] * v.b;
+        const float g = p->fromWork[3] * v.r + p->fromWork[4] * v.g + p->fromWork[5] * v.b;
+        const float b = p->fromWork[6] * v.r + p->fromWork[7] * v.g + p->fromWork[8] * v.b;
         v.r = r;
         v.g = g;
         v.b = b;
     }
-    const bool assoc = p.premultiplied && p.transfer != CK_TRANSFER_LINEAR && v.a > 1e-6f;
-    const float ia = assoc ? 1.0f / v.a : 1.0f;
-    const float ka = assoc ? v.a : 1.0f;
-    v.r = ck_encode(p.transfer, v.r * ia) * ka;
-    v.g = ck_encode(p.transfer, v.g * ia) * ka;
-    v.b = ck_encode(p.transfer, v.b * ia) * ka;
+    v.r = ck_encode(p->transfer, v.r) * ka;
+    v.g = ck_encode(p->transfer, v.g) * ka;
+    v.b = ck_encode(p->transfer, v.b) * ka;
     ck_write(p, dst, x, y, v);
 }
 
@@ -537,27 +587,32 @@ CK_FN void ck_mask_view(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix orig, 
 CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const float* L1,
                      CK_G const float* L2, CK_G const float* L3, CK_G const float* mask, CK_G float* dst)
 {
-    const int wx = x + p.dstOffsetX;
-    const int wy = y + p.dstOffsetY;
-    const int cx = ck_clampi(wx, 0, p.srcWidth - 1);
-    const int cy = ck_clampi(wy, 0, p.srcHeight - 1);
-    const CKPix orig = ck_fetch(L0, p.srcWidth, cx, cy);
+    const int wx = x + p->dstOffsetX;
+    const int wy = y + p->dstOffsetY;
+    const int cx = ck_clampi(wx, 0, p->srcWidth - 1);
+    const int cy = ck_clampi(wy, 0, p->srcHeight - 1);
+    const CKPix orig = ck_fetch(L0, p->srcWidth, cx, cy);
 
     float m = 1.0f;
-    if (p.useMask) m = mask[cy * p.srcWidth + cx];
-    m *= p.mix;
+    if (p->useMask) m = mask[cy * p->srcWidth + cx];
+    m *= p->mix;
 
     const float fx = (float)wx;
     const float fy = (float)wy;
-    // Lateral colour and its defocus vanish on the optical axis and grow towards the corners.
+    // Lateral colour and its defocus vanish on the optical axis and grow towards the corners as
+    // (radius / half diagonal)^falloff: the same at the corner, a cleaner centre for falloff > 1.
+    const float dx = fx - p->centerX;
+    const float dy = fy - p->centerY;
     float field = 1.0f;
-    if (p.mode != CK_MODE_SEPARATION) {
-        const float dx = fx - p.centerX;
-        const float dy = fy - p.centerY;
-        field = ck_fminf(1.0f, ck_sqrtf(dx * dx + dy * dy) * p.invHalfDiagonal);
+    float scale = 0.0f;  // relative magnification of this pixel for t = 1
+    if (p->mode != CK_MODE_SEPARATION) {
+        const float rho = ck_sqrtf(dx * dx + dy * dy) * p->invHalfDiagonal;
+        const float shape = p->falloff == 1.0f ? 1.0f : (rho > 0.0f ? ck_powf(rho, p->falloff - 1.0f) : 0.0f);
+        field = ck_fminf(1.0f, rho * shape);
+        scale = p->radialScale * shape;
     }
     if (m <= 0.0f) {
-        if (p.showMask) ck_mask_view(p, dst, x, y, orig, orig);
+        if (p->showMask) ck_mask_view(p, dst, x, y, orig, orig);
         else ck_store(p, dst, x, y, orig);
         return;
     }
@@ -566,45 +621,47 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
     float mr = 0.0f, mg = 0.0f, mb = 0.0f;  // achromatic version of the same taps
     float yr = 0.0f, yg = 0.0f, yb = 0.0f;  // Fringe Blur: the same taps unblurred
     float yar = 0.0f, yag = 0.0f, yab = 0.0f;
-    for (int i = 0; i < p.numTaps; ++i) {
-        const float t = p.tapT[i];
+    for (int i = 0; i < p->numTaps; ++i) {
+        const float t = p->tapT[i];
         float sx, sy;
-        if (p.mode == CK_MODE_SEPARATION) {
-            sx = fx - t * p.dirX;
-            sy = fy - t * p.dirY;
+        if (p->mode == CK_MODE_SEPARATION) {
+            sx = fx - t * p->dirX;
+            sy = fy - t * p->dirY;
         } else {
-            const float s = 1.0f / (1.0f + t * p.radialScale);
-            sx = p.centerX + (fx - p.centerX) * s;
-            sy = p.centerY + (fy - p.centerY) * s;
+            // Magnified by 1 + t * scale: the source sits r / (1 + t * scale) from the centre. The
+            // clamp keeps the pole out of reach where a steep falloff meets a far-off optical centre.
+            const float k = 1.0f - 1.0f / ck_fmaxf(0.5f, 1.0f + t * scale);
+            sx = fx - dx * k * p->anaX;
+            sy = fy - dy * k * p->anaY;
         }
         // Field-dependent defocus (lens modes) and axial colour (same over the frame) add in quadrature.
-        const float lf2 = p.tapLevel[i] * field;
-        const float lev = p.tapLevelAxial[i] > 0.0f ? ck_sqrtf(lf2 * lf2 + p.tapLevelAxial[i] * p.tapLevelAxial[i]) : lf2;
+        const float lf2 = p->tapLevel[i] * field;
+        const float lev = p->tapLevelAxial[i] > 0.0f ? ck_sqrtf(lf2 * lf2 + p->tapLevelAxial[i] * p->tapLevelAxial[i]) : lf2;
         const int l0 = (int)ck_floorf(lev);
         const float lf = lev - (float)l0;
-        CKPix v = ck_bilinear(ck_level(l0, L0, L1, L2, L3), p.srcWidth, p.srcHeight, sx, sy);
-        if (lf > 0.001f && l0 + 1 < p.numLevels) {
-            const CKPix u = ck_bilinear(ck_level(l0 + 1, L0, L1, L2, L3), p.srcWidth, p.srcHeight, sx, sy);
+        CKPix v = ck_bilinear(ck_level(l0, L0, L1, L2, L3), p->srcWidth, p->srcHeight, sx, sy);
+        if (lf > 0.001f && l0 + 1 < p->numLevels) {
+            const CKPix u = ck_bilinear(ck_level(l0 + 1, L0, L1, L2, L3), p->srcWidth, p->srcHeight, sx, sy);
             v.r += (u.r - v.r) * lf;
             v.g += (u.g - v.g) * lf;
             v.b += (u.b - v.b) * lf;
             v.a += (u.a - v.a) * lf;
         }
-        const float wr = p.tapW[i * 3 + 0];
-        const float wg = p.tapW[i * 3 + 1];
-        const float wb = p.tapW[i * 3 + 2];
+        const float wr = p->tapW[i * 3 + 0];
+        const float wg = p->tapW[i * 3 + 1];
+        const float wb = p->tapW[i * 3 + 2];
         r += wr * v.r;
         g += wg * v.g;
         b += wb * v.b;
         ar += wr * v.a;
         ag += wg * v.a;
         ab += wb * v.a;
-        const float wy = p.lumR * wr + p.lumG * wg + p.lumB * wb;
+        const float wy = p->lumR * wr + p->lumG * wg + p->lumB * wb;
         mr += wy * v.r;
         mg += wy * v.g;
         mb += wy * v.b;
-        if (p.keepLuma) {
-            const CKPix u = ck_bilinear(L0, p.srcWidth, p.srcHeight, sx, sy);
+        if (p->keepLuma) {
+            const CKPix u = ck_bilinear(L0, p->srcWidth, p->srcHeight, sx, sy);
             yr += wr * u.r;
             yg += wg * u.g;
             yb += wb * u.b;
@@ -613,20 +670,32 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
             yab += wb * u.a;
         }
     }
-    if (p.cleanFringe) {
+    if (p->cleanFringe) {
         // The dispersion's own colour is (rgb - mono). Keep its luminance and its
         // warm/cool part; drop the magenta/green part (thin lines would otherwise lose
         // or keep only the middle of the spectrum and turn pink or green).
-        const float c = (r - mr) * p.fringeDualX + (g - mg) * p.fringeDualY + (b - mb) * p.fringeDualZ;
-        r -= c * p.fringeAxisX;
-        g -= c * p.fringeAxisY;
-        b -= c * p.fringeAxisZ;
+        const float c = (r - mr) * p->fringeDualX + (g - mg) * p->fringeDualY + (b - mb) * p->fringeDualZ;
+        r -= c * p->fringeAxisX;
+        g -= c * p->fringeAxisY;
+        b -= c * p->fringeAxisZ;
     }
-    if (p.keepLuma) {
+    if (p->saturation != 1.0f) {
+        // Fringe Saturation scales the colour the dispersion adds (rgb - mono). Above 1 the gain
+        // stops where a channel would cross zero, so vivid fringes never turn into dark specks.
+        float k = p->saturation;
+        if (k > 1.0f) {
+            const float limit = ck_fminf(ck_gain_limit(mr, r - mr), ck_fminf(ck_gain_limit(mg, g - mg), ck_gain_limit(mb, b - mb)));
+            k = ck_fminf(k, ck_fmaxf(1.0f, limit));
+        }
+        r = mr + (r - mr) * k;
+        g = mg + (g - mg) * k;
+        b = mb + (b - mb) * k;
+    }
+    if (p->keepLuma) {
         // Only the colour of the fringes softens: the blurred chromaticity at the sharp
         // luminance (linear light), coverage from the sharp taps.
-        const float ys = p.lumR * yr + p.lumG * yg + p.lumB * yb;
-        const float yb2 = p.lumR * r + p.lumG * g + p.lumB * b;
+        const float ys = p->lumR * yr + p->lumG * yg + p->lumB * yb;
+        const float yb2 = p->lumR * r + p->lumG * g + p->lumB * b;
         if (yb2 > 1e-6f && ys > 0.0f) {
             const float k = ys / yb2;
             r *= k;
@@ -649,7 +718,7 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
     out.g = orig.g + (g - orig.g) * m;
     out.b = orig.b + (b - orig.b) * m;
     out.a = orig.a + (a - orig.a) * m;
-    if (p.showMask) ck_mask_view(p, dst, x, y, orig, out);
+    if (p->showMask) ck_mask_view(p, dst, x, y, orig, out);
     else ck_store(p, dst, x, y, out);
 }
 

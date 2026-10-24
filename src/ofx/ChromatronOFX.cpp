@@ -40,6 +40,10 @@ const char* const kLateralColor = "lateralColor";
 const char* const kAxialColor = "axialColor";
 const char* const kFocus = "focusWavelength";
 const char* const kCenter = "center";
+const char* const kFalloff = "falloff";
+const char* const kAnamorphic = "anamorphic";
+const char* const kHighlight = "highlightBoost";
+const char* const kSaturation = "fringeSaturation";
 const char* const kThreshold = "threshold";
 const char* const kSoftness = "softness";
 const char* const kShowMask = "showMask";
@@ -71,6 +75,10 @@ public:
         axialColor_ = fetchDoubleParam(kAxialColor);
         focus_ = fetchDoubleParam(kFocus);
         center_ = fetchDouble2DParam(kCenter);
+        falloff_ = fetchDoubleParam(kFalloff);
+        anamorphic_ = fetchDoubleParam(kAnamorphic);
+        highlight_ = fetchDoubleParam(kHighlight);
+        saturation_ = fetchDoubleParam(kSaturation);
         threshold_ = fetchDoubleParam(kThreshold);
         softness_ = fetchDoubleParam(kSoftness);
         showMask_ = fetchBooleanParam(kShowMask);
@@ -97,7 +105,7 @@ public:
         else if (name == kResetAberration) reset("Reset Lens Aberration", lateral_, balance_);
         else if (name == kResetPhysical) reset("Reset Physical Lens", correction_, lateralColor_, axialColor_, focus_);
         else if (name == kResetMask) reset("Reset Edge Mask", threshold_, softness_, showMask_);
-        else if (name == kResetOptics) reset("Reset Optics", center_, blur_, mix_);
+        else if (name == kResetOptics) reset("Reset Optics", center_, falloff_, anamorphic_, highlight_, saturation_, blur_, mix_);
     }
 
 private:
@@ -150,6 +158,10 @@ private:
         s.threshold = threshold_->getValueAtTime(t);
         s.softness = softness_->getValueAtTime(t);
         s.showMask = showMask_->getValueAtTime(t);
+        s.falloff = falloff_->getValueAtTime(t);
+        s.anamorphic = anamorphic_->getValueAtTime(t);
+        s.highlightBoost = highlight_->getValueAtTime(t);
+        s.fringeSaturation = saturation_->getValueAtTime(t);
         s.channelBlur = blur_->getValueAtTime(t);
         s.mix = mix_->getValueAtTime(t);
         return s;
@@ -185,6 +197,8 @@ private:
         axialColor_->setEnabled(phys);
         focus_->setEnabled(phys);
         center_->setEnabled(!sep);
+        falloff_->setEnabled(!sep);
+        anamorphic_->setEnabled(!sep);
         blur_->setEnabled(!phys);  // the physical lens defocuses through Axial Color
     }
 
@@ -219,6 +233,10 @@ private:
     DoubleParam* axialColor_ = nullptr;
     DoubleParam* focus_ = nullptr;
     Double2DParam* center_ = nullptr;
+    DoubleParam* falloff_ = nullptr;
+    DoubleParam* anamorphic_ = nullptr;
+    DoubleParam* highlight_ = nullptr;
+    DoubleParam* saturation_ = nullptr;
     DoubleParam* threshold_ = nullptr;
     DoubleParam* softness_ = nullptr;
     BooleanParam* showMask_ = nullptr;
@@ -461,6 +479,20 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     center->setDisplayRange(0.0, 0.0, 1.0, 1.0);
     center->setParent(*optics);
     page->addChild(*center);
+    defineDouble(desc, kFalloff, "Falloff",
+                 "How the lens modes grow from the optical centre: 1 = evenly, higher = a clean centre and strong "
+                 "corners. The value at the frame corner stays the same.",
+                 1.0, 1.0, 8.0, 1.0, 4.0, optics, page);
+    defineDouble(desc, kAnamorphic, "Anamorphic",
+                 "0 = round lens; 1 = horizontal fringes only, like an anamorphic lens; -1 = vertical only.", 0.0, -1.0,
+                 1.0, -1.0, 1.0, optics, page);
+    defineDouble(desc, kHighlight, "Highlight Boost",
+                 "Stops of light restored to clipped highlights before the optics, so fringes glow out of them "
+                 "instead of tinting the white. 0 = off; useful for SDR and display-referred footage.",
+                 0.0, 0.0, 8.0, 0.0, 4.0, optics, page);
+    defineDouble(desc, kSaturation, "Fringe Saturation",
+                 "Strength of the fringe colour, independent of its width: 0 = no colour, 1 = natural, 2 = vivid.",
+                 1.0, 0.0, 10.0, 0.0, 2.0, optics, page);
     defineDouble(desc, kBlur, "Fringe Blur", "Softens the colour of the fringes, pixels; image detail stays sharp.",
                  0.0, 0.0, 200.0, 0.0, 20.0, optics, page);
     defineDouble(desc, kMix, "Mix", "Blend with the original.", 1.0, 0.0, 1.0, 0.0, 1.0, optics, page);

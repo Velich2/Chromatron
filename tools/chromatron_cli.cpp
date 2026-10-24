@@ -8,6 +8,7 @@
 //   --lateral PX  --balance -1..1
 //   --correction singlet|achromat|apo  --lateral-color PX  --axial PX  --focus NM
 //   --cx 0..1 --cy 0..1  --threshold 0..1  --softness 0..1  --show-mask  --blur PX  --mix 0..1
+//   --falloff 1..8  --anamorphic -1..1  --highlights STOPS  --saturation 0..10
 //   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065|dwg|dwglinear|rec709scene
 //           (encoding of the pixels; rec709 = gamma 2.4 / BT.1886)
 
@@ -296,6 +297,10 @@ int main(int argc, char** argv)
             else if (a == "--show-mask") s.showMask = true;
             else if (a == "--blur") s.channelBlur = std::stod(next());
             else if (a == "--mix") s.mix = std::stod(next());
+            else if (a == "--falloff") s.falloff = std::stod(next());
+            else if (a == "--anamorphic") s.anamorphic = std::stod(next());
+            else if (a == "--highlights") s.highlightBoost = std::stod(next());
+            else if (a == "--saturation") s.fringeSaturation = std::stod(next());
             else if (a == "--backend") backend = next();
             else if (a == "--space") {
                 const std::string v = next();

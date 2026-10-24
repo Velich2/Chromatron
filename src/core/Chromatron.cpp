@@ -21,7 +21,9 @@
 // profile (like a prism) instead of a hard digital offset.
 //
 // Fringe Blur blurs the taps but keeps the luminance of the sharp result, so only the
-// colour of the fringes softens.
+// colour of the fringes softens. Fringe Saturation scales the colour the dispersion adds,
+// Falloff and Anamorphic shape how the lens modes grow over the frame, and Highlight Boost
+// expands clipped highlights before the optics so that fringes spill light out of them.
 //
 // Every tap carries RGB weights that sum to one per channel, so a neutral image with no
 // displacement reproduces exactly.
@@ -416,20 +418,24 @@ bool isIdentity(const Settings& s)
     }
 }
 
-// Spatial reach of the effect itself (displacement plus defocus), px at render scale.
-double effectReach(const Settings& s, double rs)
+double clampFalloff(double f) { return std::max(1.0, std::min(8.0, f)); }
+
+// Spatial reach of the effect itself (displacement plus defocus), px at render scale. The lens
+// modes reach Lateral at the frame corner and grow as field^falloff beyond it.
+double effectReach(const Settings& s, double rs, double fieldMax = 1.0)
 {
     const double blur = std::max(0.0, s.channelBlur) * rs;
+    const double field = std::pow(std::max(1.0, fieldMax), clampFalloff(s.falloff));
     switch (s.mode) {
     case Mode::Separation: return 0.5 * std::fabs(s.distance) * rs * (1.0 + std::max(0.0, s.spread)) + 3.0 * blur;
-    case Mode::Aberration: return std::fabs(s.lateral) * rs + 3.0 * blur;
-    default: return std::fabs(s.lateralColor) * rs + 3.0 * std::max(0.0, s.axialColor) * rs;
+    case Mode::Aberration: return std::fabs(s.lateral) * rs * field + 3.0 * blur;
+    default: return std::fabs(s.lateralColor) * rs * field + 3.0 * std::max(0.0, s.axialColor) * rs;
     }
 }
 
-double sampleMargin(const Settings& s, double rs)
+double sampleMargin(const Settings& s, double rs, double fieldMax)
 {
-    double m = effectReach(s, rs) + 2.0;
+    double m = effectReach(s, rs, fieldMax) + 2.0;
     if (s.threshold > 0.0) m += 3.0 * (0.5 * m + 4.0 * rs);
     return m;
 }
@@ -456,6 +462,10 @@ Plan buildPlan(const Settings& s, const Geometry& g)
     p.mix = (float)std::max(0.0, std::min(1.0, s.mix));
     p.premultiplied = g.premultiplied ? 1 : 0;
     p.hostHalf = g.hostHalf ? 1 : 0;
+    p.saturation = (float)std::max(0.0, std::min(10.0, s.fringeSaturation));
+    p.highlightGain = (float)std::exp2(std::max(0.0, std::min(8.0, s.highlightBoost)));
+    p.falloff = 1.0f;
+    p.anaX = p.anaY = 1.0f;
     setupColorSpace(p, s.space);
     const double lum[3] = {p.lumR, p.lumG, p.lumB};
 
@@ -478,6 +488,10 @@ Plan buildPlan(const Settings& s, const Geometry& g)
         const double lateral = physical ? s.lateralColor : s.lateral;
         p.radialScale = (float)std::max(-0.5, std::min(0.5, lateral * rs / hd));
         p.invHalfDiagonal = (float)(1.0 / hd);
+        p.falloff = (float)clampFalloff(s.falloff);
+        const double ana = std::max(-1.0, std::min(1.0, s.anamorphic));
+        p.anaX = (float)(1.0 - std::max(0.0, -ana));
+        p.anaY = (float)(1.0 - std::max(0.0, ana));
         if (physical) {
             taps = physicalTaps(s, rs, lum);
         } else {

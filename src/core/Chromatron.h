@@ -58,6 +58,10 @@ struct Settings {
     bool showMask = false;
 
     // Common
+    double falloff = 1.0;          // lens modes: the effect grows as (radius / half diagonal)^falloff
+    double anamorphic = 0.0;       // lens modes: 1 = horizontal displacement only, -1 = vertical only
+    double highlightBoost = 0.0;   // stops added to white before the optics (clipped footage spills light)
+    double fringeSaturation = 1.0; // gain of the colour the dispersion adds
     double channelBlur = 0.0;  // Fringe Blur: px blur of the fringe colour; luminance stays sharp
     double mix = 1.0;
 };
@@ -106,8 +110,9 @@ bool colorSpaceFromName(const std::string& name, ColorSpace& out);
 // True when the effect leaves the image untouched (host may pass the source through).
 bool isIdentity(const Settings& s);
 
-// How far (px at the given render scale) the effect reads beyond an output pixel.
-double sampleMargin(const Settings& s, double renderScale);
+// How far (px at the given render scale) the effect reads beyond an output pixel. fieldMax is the
+// largest field radius in the frame (distance from the optical centre / half diagonal), 1 when centred.
+double sampleMargin(const Settings& s, double renderScale, double fieldMax = 1.0);
 
 // Runs all passes for one frame. src/dst are handles of the backend's buffer type.
 void render(Backend& backend, const Plan& plan, const void* src, void* dst);

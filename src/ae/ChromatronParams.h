@@ -41,6 +41,10 @@ enum {
     P_MASK_END,
     P_OPTICS_START,
     P_CENTER,
+    P_FALLOFF,
+    P_ANAMORPHIC,
+    P_HIGHLIGHT,
+    P_SATURATION,
     P_BLUR,
     P_MIX,
     P_OPTICS_RESET,
@@ -79,7 +83,7 @@ struct Inputs {
 };
 
 // Stores one value in host-neutral units: popups 1-based, checkboxes 0/1, angles in degrees,
-// sliders as shown in the UI (Mix in percent), points as (v, y). Other indices are ignored.
+// sliders as shown in the UI (Mix and Fringe Saturation in percent), points as (v, y). Other indices are ignored.
 inline void SetParam(int index, double v, double y, Inputs& out)
 {
     Settings& s = out.settings;
@@ -107,6 +111,10 @@ inline void SetParam(int index, double v, double y, Inputs& out)
     case P_THRESHOLD: s.threshold = v; break;
     case P_SOFTNESS: s.softness = v; break;
     case P_SHOW_MASK: s.showMask = v != 0; break;
+    case P_FALLOFF: s.falloff = v; break;
+    case P_ANAMORPHIC: s.anamorphic = v; break;
+    case P_HIGHLIGHT: s.highlightBoost = v; break;
+    case P_SATURATION: s.fringeSaturation = v / 100.0; break;
     case P_BLUR: s.channelBlur = v; break;
     case P_MIX: s.mix = v / 100.0; break;
     case P_USE_GPU: out.useGpu = v != 0; break;

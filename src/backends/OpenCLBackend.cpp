@@ -11,6 +11,7 @@
 #include <CL/cl.h>
 #endif
 
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -74,6 +75,7 @@ public:
     {
         for (cl_kernel k : kernels_)
             if (k) clReleaseKernel(k);
+        if (params_) clReleaseMemObject(params_);
     }
 
     const char* name() const override { return "OpenCL"; }
@@ -92,7 +94,7 @@ public:
     void import(const CKParams& p, const void* src, void* work) override
     {
         cl_kernel k = kernels_[kImport];
-        setArg(k, 0, sizeof(p), &p);
+        setMem(k, 0, params(p));
         setMem(k, 1, src);
         setMem(k, 2, work);
         run(k, p.srcWidth, p.srcHeight);
@@ -101,7 +103,7 @@ public:
     void luma(const CKParams& p, const void* work, void* luma) override
     {
         cl_kernel k = kernels_[kLuma];
-        setArg(k, 0, sizeof(p), &p);
+        setMem(k, 0, params(p));
         setMem(k, 1, work);
         setMem(k, 2, luma);
         run(k, p.srcWidth, p.srcHeight);
@@ -119,7 +121,7 @@ public:
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
         cl_kernel k = kernels_[kContrast];
-        setArg(k, 0, sizeof(p), &p);
+        setMem(k, 0, params(p));
         setMem(k, 1, luma);
         setMem(k, 2, lumaBlur);
         setMem(k, 3, mask);
@@ -129,7 +131,7 @@ public:
     void gather(const CKParams& p, const void* const levels[CK_MAX_LEVELS], const void* mask, void* dst) override
     {
         cl_kernel k = kernels_[kGather];
-        setArg(k, 0, sizeof(p), &p);
+        setMem(k, 0, params(p));
         for (int i = 0; i < CK_MAX_LEVELS; ++i) setMem(k, 1 + i, levels[i]);
         setMem(k, 5, mask);
         setMem(k, 6, dst);
@@ -156,6 +158,21 @@ public:
 private:
     enum { kImport, kLuma, kBlur, kContrast, kGather, kCount };
 
+    // The parameter block lives in a small constant buffer: as a by-value argument it would exceed
+    // the 1024 bytes OpenCL guarantees for all arguments of a kernel. The passes of a frame share
+    // one block, so it is uploaded once and replaced only when it changes.
+    cl_mem params(const CKParams& p)
+    {
+        if (params_ && std::memcmp(&p, &paramsValue_, sizeof(p)) == 0) return params_;
+        if (params_) clReleaseMemObject(params_);  // kernels already queued keep it alive
+        params_ = nullptr;
+        cl_int err = CL_SUCCESS;
+        params_ = clCreateBuffer(ctx_, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(p), const_cast<CKParams*>(&p), &err);
+        check(err, "clCreateBuffer (parameters)");
+        paramsValue_ = p;
+        return params_;
+    }
+
     static void setArg(cl_kernel k, cl_uint i, size_t size, const void* value)
     {
         check(clSetKernelArg(k, i, size, value), "clSetKernelArg");
@@ -179,6 +196,8 @@ private:
     cl_context ctx_ = nullptr;
     cl_device_id device_ = nullptr;
     cl_kernel kernels_[kCount] = {};
+    cl_mem params_ = nullptr;
+    CKParams paramsValue_ = {};
 };
 
 }  // namespace
