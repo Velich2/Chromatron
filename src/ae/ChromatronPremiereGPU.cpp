@@ -67,8 +67,11 @@ public:
         if (!frameworkBuilt(fw) || !mDeviceInfo.outMeetsMinimumRequirementsForAcceleration) return suiteError_Fail;
         try {
             // OpenCL / Metal kernels are compiled (and cached per device) now, so a driver that
-            // rejects them leaves the effect on the CPU instead of failing frames.
+            // rejects them leaves the effect on the CPU instead of failing frames; CUDA is probed.
             makeBackend();
+#if CHROMATRON_HAS_CUDA
+            if (fw == PrGPUDeviceFramework_CUDA && !cx::cudaUsable()) return suiteError_Fail;
+#endif
         } catch (const std::exception&) {
             return suiteError_Fail;
         }

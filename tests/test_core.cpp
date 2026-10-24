@@ -16,6 +16,10 @@
 #endif
 #endif
 
+#if CHROMATRON_HAS_CUDA
+#include <cuda_runtime.h>
+#endif
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -785,6 +789,68 @@ void testFringeSaturation()
     expect(c0 < 1e-4f && c3 > 1.3f * c1 && low3 >= std::fmin(low1, 0.0f) - 1e-5f, what);
 }
 
+// Backend parity case `run` (0..5): every mode with the defaults, then with the look controls,
+// on a chart encoded in the mode's colour space.
+Settings parityCase(int run, Frame& f)
+{
+    const int mode = run % 3;
+    Settings s = aberration();
+    s.mode = (Mode)mode;
+    s.correction = LensCorrection::Achromat;
+    s.threshold = 0.4;
+    s.distance = 9.0;
+    if (run >= 3) withLook(s);
+    s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
+    f = neutralChart(96, 64);
+    const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
+    for (size_t i = 0; i < f.px.size(); i += 4)
+        for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(transfer, f.px[i + c]);
+    return s;
+}
+
+#if CHROMATRON_HAS_CUDA
+// The CUDA backend against the CPU, and the CPU path used for GPUs this build has no code for.
+void testCuda()
+{
+    if (!cudaUsable()) {
+        std::printf("[skip] no CUDA device this build can run on\n");
+        return;
+    }
+    for (int run = 0; run < 6; ++run) {
+        Frame f;
+        const Settings s = parityCase(run, f);
+        const Geometry g = fullGeometry(f.w, f.h);
+        const std::vector<float> ref = runCpu(s, g, f.px);
+        const size_t bytes = f.px.size() * sizeof(float);
+        void* src = nullptr;
+        void* dst = nullptr;
+        cudaMalloc(&src, bytes);
+        cudaMalloc(&dst, bytes);
+        cudaMemcpy(src, f.px.data(), bytes, cudaMemcpyHostToDevice);
+        std::vector<float> out(f.px.size());
+        try {
+            auto be = makeCudaBackend(nullptr);
+            render(*be, buildPlan(s, g), src, dst);
+            be->download(dst, out.data(), bytes);
+            const float d = maxDiff(ref, out);
+            char what[96];
+            std::snprintf(what, sizeof(what), "CUDA matches CPU, run %d (max diff %.2g)", run, d);
+            expect(d < 2e-3f, what);
+
+            renderOnHost(*be, buildPlan(s, g), src, bytes, dst, bytes);
+            be->download(dst, out.data(), bytes);
+            std::snprintf(what, sizeof(what), "CUDA images rendered on the CPU, run %d", run);
+            expect(maxDiff(ref, out) == 0.0f, what);
+        } catch (const std::exception& e) {
+            std::printf("%s\n", e.what());
+            expect(false, "CUDA backend runs");
+        }
+        cudaFree(src);
+        cudaFree(dst);
+    }
+}
+#endif
+
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
@@ -806,18 +872,8 @@ void testOpenCL()
     cl_context ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
     cl_command_queue q = clCreateCommandQueue(ctx, device, 0, &err);
     for (int run = 0; run < 6; ++run) {
-        const int mode = run % 3;
-        Settings s = aberration();
-        s.mode = (Mode)mode;
-        s.correction = LensCorrection::Achromat;
-        s.threshold = 0.4;
-        s.distance = 9.0;
-        if (run >= 3) withLook(s);
-        s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
-        Frame f = neutralChart(96, 64);
-        const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
-        for (size_t i = 0; i < f.px.size(); i += 4)
-            for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(transfer, f.px[i + c]);
+        Frame f;
+        const Settings s = parityCase(run, f);
         const Geometry g = fullGeometry(f.w, f.h);
         const std::vector<float> ref = runCpu(s, g, f.px);
         const size_t bytes = f.px.size() * sizeof(float);
@@ -871,18 +927,8 @@ void testOpenCL()
 void testMetal()
 {
     for (int run = 0; run < 6; ++run) {
-        const int mode = run % 3;
-        Settings s = aberration();
-        s.mode = (Mode)mode;
-        s.correction = LensCorrection::Achromat;
-        s.threshold = 0.4;
-        s.distance = 9.0;
-        if (run >= 3) withLook(s);
-        s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
-        Frame f = neutralChart(96, 64);
-        const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
-        for (size_t i = 0; i < f.px.size(); i += 4)
-            for (int c = 0; c < 3; ++c) f.px[i + c] = ck_encode(transfer, f.px[i + c]);
+        Frame f;
+        const Settings s = parityCase(run, f);
         const Geometry g = fullGeometry(f.w, f.h);
         const std::vector<float> ref = runCpu(s, g, f.px);
         std::vector<float> out(f.px.size());
@@ -927,6 +973,9 @@ int main()
     testHighlightBoost();
     testFalloffAnamorphic();
     testFringeSaturation();
+#if CHROMATRON_HAS_CUDA
+    testCuda();
+#endif
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
 #endif

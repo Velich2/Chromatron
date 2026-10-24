@@ -19,6 +19,10 @@ close the host and copy them:
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
 published yet: it has to be built on a Mac with the After Effects SDK (see [Building](#building)).
 
+GPU rendering with CUDA needs an NVIDIA GPU from the Turing generation (GTX 16xx, RTX 20xx) or newer and
+driver R580 or newer. On older NVIDIA GPUs or drivers the effect renders on the CPU automatically; OpenCL and
+Metal have no such limit.
+
 ## Modes
 The examples are rendered with `chromatron_cli` from its synthetic test frame (1920×1080); each caption gives the
 options: `chromatron_cli --synthetic 1920x1080 out.ppm <options>`.

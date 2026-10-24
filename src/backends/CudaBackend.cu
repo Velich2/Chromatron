@@ -131,4 +131,13 @@ std::unique_ptr<Backend> makeCudaBackend(void* stream)
     return std::make_unique<CudaBackend>(static_cast<cudaStream_t>(stream));
 }
 
+bool cudaUsable()
+{
+    // Loading a kernel fails with an insufficient driver or without a matching code image.
+    cudaFuncAttributes attr;
+    if (cudaFuncGetAttributes(&attr, k_gather) == cudaSuccess) return true;
+    cudaGetLastError();  // leave no error behind for the host's own CUDA calls
+    return false;
+}
+
 }  // namespace chromatron
