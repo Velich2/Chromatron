@@ -117,7 +117,7 @@ public:
         g.srcPitch = srcRowBytes / channelBytes;
         g.dstPitch = dstRowBytes / channelBytes;
         g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
-        g.hostHalf = half;
+        g.hostFormat = half ? CK_HOST_HALF : CK_HOST_FLOAT;
         g.premultiplied = false;  // straight alpha, like the BGRA_4444 CPU formats
         g.renderScale = inRenderParams->inDownsampleFactorX > 0.0f ? inRenderParams->inDownsampleFactorX : 1.0;
         g.centerX = inputs.centerX;

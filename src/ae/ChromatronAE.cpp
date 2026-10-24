@@ -448,7 +448,7 @@ cx::Geometry MakeGeometry(PF_InData* in_data, const Inputs& inputs, const PF_Eff
     return g;
 }
 
-// CPU: 32 bpc is processed in place (ARGB float); 8/16 bpc go through a float copy.
+// CPU: the kernels read and write AE's ARGB worlds directly, 8, 16 and 32 bpc.
 PF_Err RenderCPU(PF_InData* in_data, const Inputs& inputs, PF_EffectWorld* src, PF_EffectWorld* dst)
 {
     Suite<PF_WorldSuite2> worlds(in_data, kPFWorldSuite, kPFWorldSuiteVersion2);
@@ -457,67 +457,20 @@ PF_Err RenderCPU(PF_InData* in_data, const Inputs& inputs, PF_EffectWorld* src, 
     PF_Err err = worlds->PF_GetPixelFormat(src, &format);
     if (err) return err;
 
-    std::unique_ptr<cx::Backend> backend = cx::makeCpuBackend();
-    if (format == PF_PixelFormat_ARGB128) {
-        cx::Geometry g = MakeGeometry(in_data, inputs, src, dst);
-        g.srcPitch = (int)(src->rowbytes / sizeof(float));
-        g.dstPitch = (int)(dst->rowbytes / sizeof(float));
-        g.srcOrder = g.dstOrder = CK_ORDER_ARGB;
-        cx::render(*backend, cx::buildPlan(ResolveSettings(inputs, true), g), src->data, dst->data);
-        return PF_Err_NONE;
-    }
-
-    const bool deep = format == PF_PixelFormat_ARGB64;
-    if (!deep && format != PF_PixelFormat_ARGB32) return PF_Err_UNRECOGNIZED_PARAM_TYPE;
-    const float maxv = deep ? (float)PF_MAX_CHAN16 : (float)PF_MAX_CHAN8;
-
-    std::vector<float> in((size_t)src->width * src->height * 4);
-    std::vector<float> out((size_t)dst->width * dst->height * 4);
-    for (A_long y = 0; y < src->height; ++y) {
-        const char* row = (const char*)src->data + (size_t)y * src->rowbytes;
-        float* d = &in[(size_t)y * src->width * 4];
-        for (A_long x = 0; x < src->width; ++x, d += 4) {
-            if (deep) {
-                const PF_Pixel16& p = ((const PF_Pixel16*)row)[x];
-                d[0] = p.red / maxv;
-                d[1] = p.green / maxv;
-                d[2] = p.blue / maxv;
-                d[3] = p.alpha / maxv;
-            } else {
-                const PF_Pixel8& p = ((const PF_Pixel8*)row)[x];
-                d[0] = p.red / maxv;
-                d[1] = p.green / maxv;
-                d[2] = p.blue / maxv;
-                d[3] = p.alpha / maxv;
-            }
-        }
-    }
-
     cx::Geometry g = MakeGeometry(in_data, inputs, src, dst);
-    g.srcPitch = src->width * 4;
-    g.dstPitch = dst->width * 4;
-    cx::render(*backend, cx::buildPlan(ResolveSettings(inputs, false), g), in.data(), out.data());
-
-    auto q = [maxv](float v) { return std::lround(std::min(1.0f, std::max(0.0f, v)) * maxv); };
-    for (A_long y = 0; y < dst->height; ++y) {
-        char* row = (char*)dst->data + (size_t)y * dst->rowbytes;
-        const float* s = &out[(size_t)y * dst->width * 4];
-        for (A_long x = 0; x < dst->width; ++x, s += 4) {
-            if (deep) {
-                PF_Pixel16& p = ((PF_Pixel16*)row)[x];
-                p.red = (A_u_short)q(s[0]);
-                p.green = (A_u_short)q(s[1]);
-                p.blue = (A_u_short)q(s[2]);
-                p.alpha = (A_u_short)q(s[3]);
-            } else {
-                PF_Pixel8& p = ((PF_Pixel8*)row)[x];
-                p.red = (A_u_char)q(s[0]);
-                p.green = (A_u_char)q(s[1]);
-                p.blue = (A_u_char)q(s[2]);
-                p.alpha = (A_u_char)q(s[3]);
-            }
-        }
+    int channelBytes = 0;
+    switch (format) {
+    case PF_PixelFormat_ARGB128: g.hostFormat = CK_HOST_FLOAT, channelBytes = 4; break;
+    case PF_PixelFormat_ARGB64: g.hostFormat = CK_HOST_AE16, channelBytes = 2; break;
+    case PF_PixelFormat_ARGB32: g.hostFormat = CK_HOST_U8, channelBytes = 1; break;
+    default: return PF_Err_UNRECOGNIZED_PARAM_TYPE;
     }
+    g.srcPitch = (int)(src->rowbytes / channelBytes);
+    g.dstPitch = (int)(dst->rowbytes / channelBytes);
+    g.srcOrder = g.dstOrder = CK_ORDER_ARGB;
+    std::unique_ptr<cx::Backend> backend = cx::makeCpuBackend();
+    cx::render(*backend, cx::buildPlan(ResolveSettings(inputs, format == PF_PixelFormat_ARGB128), g), src->data,
+               dst->data);
     return PF_Err_NONE;
 }
 
@@ -540,7 +493,7 @@ PF_Err RenderGPU(PF_InData* in_data, PF_SmartRenderExtra* extra, const Inputs& i
     switch (extra->input->what_gpu) {
 #if CHROMATRON_HAS_CUDA
     case PF_GPU_Framework_CUDA:
-        backend = cx::makeCudaBackend(nullptr);  // AE's current context, default stream
+        backend = cx::makeCudaBackend(info.command_queuePV);  // AE's current context and stream
         break;
 #endif
 #if CHROMATRON_HAS_OPENCL
@@ -589,8 +542,8 @@ PF_Err SmartRender(PF_InData* in_data, PF_OutData* out_data, PF_SmartRenderExtra
     return err;
 }
 
-// Premiere: params[] holds the values at the current time and the input frame. BGRA_4444_32f is
-// processed in place, BGRA_4444_8u through a float copy; both use straight (unpremultiplied) alpha.
+// Premiere: params[] holds the values at the current time and the input frame. The kernels read and
+// write BGRA_4444_32f and BGRA_4444_8u directly; both use straight (unpremultiplied) alpha.
 PF_Err PremiereRender(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output)
 {
     PF_EffectWorld* src = &params[P_INPUT]->u.ld;
@@ -611,30 +564,13 @@ PF_Err PremiereRender(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* par
         cx::Geometry g = MakeGeometry(in_data, inputs, src, dst);
         g.premultiplied = false;
         g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
-        if (format == PrPixelFormat_BGRA_4444_32f) {
-            g.srcPitch = (int)(src->rowbytes / sizeof(float));
-            g.dstPitch = (int)(dst->rowbytes / sizeof(float));
-            cx::render(*backend, cx::buildPlan(settings, g), src->data, dst->data);
-            return PF_Err_NONE;
-        }
-        if (format != PrPixelFormat_BGRA_4444_8u) return PF_Err_UNRECOGNIZED_PARAM_TYPE;
-
-        std::vector<float> in((size_t)src->width * src->height * 4);
-        std::vector<float> out((size_t)dst->width * dst->height * 4);
-        for (A_long y = 0; y < src->height; ++y) {
-            const A_u_char* row = (const A_u_char*)src->data + (ptrdiff_t)y * src->rowbytes;
-            float* d = &in[(size_t)y * src->width * 4];
-            for (A_long i = 0; i < src->width * 4; ++i) d[i] = row[i] / 255.0f;
-        }
-        g.srcPitch = src->width * 4;
-        g.dstPitch = dst->width * 4;
-        cx::render(*backend, cx::buildPlan(settings, g), in.data(), out.data());
-        for (A_long y = 0; y < dst->height; ++y) {
-            A_u_char* row = (A_u_char*)dst->data + (ptrdiff_t)y * dst->rowbytes;
-            const float* s = &out[(size_t)y * dst->width * 4];
-            for (A_long i = 0; i < dst->width * 4; ++i)
-                row[i] = (A_u_char)std::lround(std::min(1.0f, std::max(0.0f, s[i])) * 255.0f);
-        }
+        const bool floats = format == PrPixelFormat_BGRA_4444_32f;
+        if (!floats && format != PrPixelFormat_BGRA_4444_8u) return PF_Err_UNRECOGNIZED_PARAM_TYPE;
+        const int channelBytes = floats ? 4 : 1;
+        g.hostFormat = floats ? CK_HOST_FLOAT : CK_HOST_U8;
+        g.srcPitch = (int)(src->rowbytes / channelBytes);
+        g.dstPitch = (int)(dst->rowbytes / channelBytes);
+        cx::render(*backend, cx::buildPlan(settings, g), src->data, dst->data);
     } catch (const std::bad_alloc&) {
         return PF_Err_OUT_OF_MEMORY;
     } catch (const std::exception& e) {

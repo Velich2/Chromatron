@@ -70,7 +70,7 @@ struct Settings {
 struct Geometry {
     int srcWidth = 0;
     int srcHeight = 0;
-    int srcPitch = 0;  // channel values per source row (floats, or halves when hostHalf)
+    int srcPitch = 0;  // channel values per source row, in the host format
     int srcOrder = CK_ORDER_RGBA;
 
     int dstWidth = 0;   // size of the region to write
@@ -87,12 +87,15 @@ struct Geometry {
     double centerY = 0.0;
     double halfDiagonal = 1.0; // frame half-diagonal, source pixels
     bool premultiplied = false; // RGB is associated with alpha (After Effects, premultiplied OFX clips)
-    bool hostHalf = false;      // src and dst hold 16-bit floats (Premiere GPU frames)
+    int hostFormat = CK_HOST_FLOAT; // how src and dst store a channel value (CK_HOST_*)
 };
 
 struct Plan {
     CKParams params;
-    float levelBlur[CK_MAX_LEVELS];  // sigma that turns level k-1 into level k
+    struct LevelStep {
+        int halvings;  // times the previous level is downsampled first
+        float sigma;   // then blurred by this much, in the level's own pixels
+    } levelSteps[CK_MAX_LEVELS];
     float detectSigma;               // mask: local-contrast scale
     int spreadRadius;                // mask: dilation so fringes beside an edge are kept
     float spreadSigma;               // mask: softening after the dilation
@@ -118,7 +121,7 @@ double sampleMargin(const Settings& s, double renderScale, double fieldMax = 1.0
 void render(Backend& backend, const Plan& plan, const void* src, void* dst);
 
 // Renders on the CPU images that live in `device` buffers (GPU disabled by the user while the
-// host still hands over GPU memory). dst is read back first so pixels outside the region survive.
+// host still hands over GPU memory). dst is read back first when the region does not cover it.
 void renderOnHost(Backend& device, const Plan& plan, const void* src, size_t srcBytes, void* dst, size_t dstBytes);
 
 }  // namespace chromatron

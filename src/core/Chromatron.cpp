@@ -461,7 +461,7 @@ Plan buildPlan(const Settings& s, const Geometry& g)
     p.dstOffsetY = g.dstOffsetY;
     p.mix = (float)std::max(0.0, std::min(1.0, s.mix));
     p.premultiplied = g.premultiplied ? 1 : 0;
-    p.hostHalf = g.hostHalf ? 1 : 0;
+    p.hostFormat = g.hostFormat;
     p.saturation = (float)std::max(0.0, std::min(10.0, s.fringeSaturation));
     p.highlightGain = (float)std::exp2(std::max(0.0, std::min(8.0, s.highlightBoost)));
     p.falloff = 1.0f;
@@ -516,19 +516,47 @@ Plan buildPlan(const Settings& s, const Geometry& g)
     p.showMask = s.showMask ? 1 : 0;
 
     p.numTaps = (int)taps.size();
-    // Level k holds the source blurred by k / (levels - 1) * maxSigma, so a tap's level
-    // coordinate is linear in its sigma; the kernel combines both parts per pixel.
+    // Blur pyramid: level k >= 1 holds the source blurred by sigma1 * 2^(k-1), up to the
+    // largest blur of any tap; the kernel finds each tap's level from its blur per pixel. A level
+    // blurred by 1.5 * 2^(n-1) px or more is stored downsampled n times, so big blurs stay cheap: each
+    // halving ([1 3 3 1] / 8) adds its own variance, the blur after it supplies the rest.
     double maxSigma = 0.0;
     for (const Tap& t : taps) maxSigma = std::max(maxSigma, std::hypot(t.sigma, t.sigmaAxial));
-    p.numLevels = maxSigma > 0.3 ? CK_MAX_LEVELS : 1;
-    for (int k = 1; k < p.numLevels; ++k)
-        plan.levelBlur[k] = (float)(maxSigma / (CK_MAX_LEVELS - 1) * std::sqrt(2.0 * k - 1.0));
+    p.numLevels = 1;
+    p.levelW[0] = p.srcWidth;
+    p.levelH[0] = p.srcHeight;
+    p.levelScale[0] = 1.0f;
+    if (maxSigma > 0.3) {
+        // Level 1 at about 0.5 px, so a small blur never has to mix the sharp source with a wide one.
+        const int blurred = std::max(1, std::min(CK_MAX_LEVELS - 1, 1 + (int)std::ceil(std::log2(maxSigma / 0.5))));
+        p.numLevels = blurred + 1;
+        const double sigma1 = maxSigma / std::exp2(blurred - 1);
+        p.levelInvSigma1 = (float)(1.0 / sigma1);
+        double variance = 0.0, spacing = 1.0;
+        int w = p.srcWidth, h = p.srcHeight;
+        for (int k = 1; k < p.numLevels; ++k) {
+            const double sigma = sigma1 * std::exp2(k - 1);
+            int halvings = 0;
+            while (1.5 * spacing <= sigma && w > 16 && h > 16) {
+                variance += 0.75 * spacing * spacing;
+                spacing *= 2.0;
+                w = (w + 1) / 2;
+                h = (h + 1) / 2;
+                ++halvings;
+            }
+            plan.levelSteps[k].halvings = halvings;
+            plan.levelSteps[k].sigma = (float)(std::sqrt(std::max(0.0, sigma * sigma - variance)) / spacing);
+            variance = std::max(variance, sigma * sigma);
+            p.levelW[k] = w;
+            p.levelH[k] = h;
+            p.levelScale[k] = (float)(1.0 / spacing);
+        }
+    }
 
     for (int i = 0; i < p.numTaps; ++i) {
         p.tapT[i] = (float)taps[i].t;
-        const double toLevel = p.numLevels > 1 ? (p.numLevels - 1) / maxSigma : 0.0;
-        p.tapLevel[i] = (float)(taps[i].sigma * toLevel);
-        p.tapLevelAxial[i] = (float)(taps[i].sigmaAxial * toLevel);
+        p.tapSigma[i] = (float)taps[i].sigma;
+        p.tapSigmaAxial[i] = (float)taps[i].sigmaAxial;
         for (int c = 0; c < 3; ++c) p.tapW[i * 3 + c] = (float)taps[i].w[c];
     }
     return plan;
@@ -554,10 +582,10 @@ void render(Backend& be, const Plan& plan, const void* src, void* dst)
         owned.push_back(h);
         return h;
     };
-    auto pass2 = [&](const void* in, void* tmp, void* out, float sigma, int channels, int dilateRadius) {
-        CKBlurParams b;
-        b.width = p.srcWidth;
-        b.height = p.srcHeight;
+    auto pass2 = [&](const void* in, void* tmp, void* out, int w, int h, float sigma, int channels, int dilateRadius) {
+        CKBlurParams b = {};
+        b.width = w;
+        b.height = h;
         b.channels = channels;
         b.horizontal = 1;
         b.dilate = dilateRadius > 0 ? 1 : 0;
@@ -573,11 +601,25 @@ void render(Backend& be, const Plan& plan, const void* src, void* dst)
     be.import(p, src, base);
     for (int k = 0; k < CK_MAX_LEVELS; ++k) levels[k] = base;
     if (p.numLevels > 1) {
-        void* tmp = alloc(pixels * 4 * sizeof(float));
+        // Level 1 is the largest blurred level, so its temporary serves every level.
+        void* tmp = alloc((size_t)p.levelW[1] * p.levelH[1] * 4 * sizeof(float));
+        const void* prev = base;
+        int w = p.srcWidth, h = p.srcHeight;
         for (int k = 1; k < p.numLevels; ++k) {
-            void* lvl = alloc(pixels * 4 * sizeof(float));
-            pass2(levels[k - 1], tmp, lvl, plan.levelBlur[k], 4, 0);
-            levels[k] = lvl;
+            for (int i = 0; i < plan.levelSteps[k].halvings; ++i) {
+                CKBlurParams d = {};
+                d.srcWidth = w;
+                d.srcHeight = h;
+                w = d.width = (w + 1) / 2;
+                h = d.height = (h + 1) / 2;
+                d.channels = 4;
+                void* half = alloc((size_t)w * h * 4 * sizeof(float));
+                be.downsample(d, prev, half);
+                prev = half;
+            }
+            void* lvl = alloc((size_t)w * h * 4 * sizeof(float));
+            pass2(prev, tmp, lvl, w, h, plan.levelSteps[k].sigma, 4, 0);
+            levels[k] = prev = lvl;
         }
     }
 
@@ -587,10 +629,10 @@ void render(Backend& be, const Plan& plan, const void* src, void* dst)
         void* t1 = alloc(pixels * sizeof(float));
         void* t2 = alloc(pixels * sizeof(float));
         be.luma(p, base, luma);
-        pass2(luma, t1, t2, plan.detectSigma, 1, 0);
+        pass2(luma, t1, t2, p.srcWidth, p.srcHeight, plan.detectSigma, 1, 0);
         be.contrast(p, luma, t2, t1);
-        pass2(t1, luma, t2, 0.0f, 1, plan.spreadRadius);
-        pass2(t2, luma, t1, plan.spreadSigma, 1, 0);
+        pass2(t1, luma, t2, p.srcWidth, p.srcHeight, 0.0f, 1, plan.spreadRadius);
+        pass2(t2, luma, t1, p.srcWidth, p.srcHeight, plan.spreadSigma, 1, 0);
         mask = t1;
     }
 
@@ -603,7 +645,12 @@ void renderOnHost(Backend& device, const Plan& plan, const void* src, size_t src
     std::vector<float> hostSrc((srcBytes + sizeof(float) - 1) / sizeof(float));
     std::vector<float> hostDst((dstBytes + sizeof(float) - 1) / sizeof(float));
     device.download(src, hostSrc.data(), srcBytes);
-    device.download(dst, hostDst.data(), dstBytes);
+    // dst is read back only when the render leaves some of it untouched.
+    const CKParams& p = plan.params;
+    const size_t channelBytes = p.hostFormat == CK_HOST_FLOAT ? 4 : p.hostFormat == CK_HOST_U8 ? 1 : 2;
+    const bool covered = p.dstBaseX == 0 && p.dstBaseY == 0 && p.dstWidth * 4 == p.dstPitch &&
+                         (size_t)p.dstHeight * (size_t)p.dstPitch * channelBytes >= dstBytes;
+    if (!covered) device.download(dst, hostDst.data(), dstBytes);
     std::unique_ptr<Backend> cpu = makeCpuBackend();
     render(*cpu, plan, hostSrc.data(), hostDst.data());
     device.upload(hostDst.data(), dst, dstBytes);

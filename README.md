@@ -117,7 +117,7 @@ Whole frame, `--mode abr --lateral 24`:
 | Anamorphic | 0 – round lens; 1 – horizontal fringes only, as with an anamorphic lens; −1 – vertical only |
 | Highlight Boost | stops of light restored to clipped highlights before the optics, so fringes glow out of them instead of tinting the white; 0 – off. For SDR and display-referred footage: HDR and scene-linear sources already carry their highlights |
 | Fringe Saturation | strength of the fringe colour, independent of its width: 0 – no colour, 100 % – natural, 200 % – vivid |
-| Fringe Blur | softens the colour of the fringes, px; luminance and image detail stay sharp. At values close to the fringe width the colour turns grey. Not available in Physical Lens, where Axial Color is the defocus |
+| Fringe Blur | softens the colour of the fringes, px; luminance and image detail stay sharp, and so do colour edges in the picture itself (only the fringe is blurred). At values close to the fringe width the colour turns grey. Not available in Physical Lens, where Axial Color is the defocus |
 | Mix | blend with the original |
 | Use GPU | render on the GPU when the host provides one; off – on the CPU |
 | Color Space | encoding of the input (see below), the last parameter in the list |
@@ -186,7 +186,8 @@ src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU throu
 tools/chromatron_cli.cpp          renders PPM/PFM through the same pipeline
 tests/test_core.cpp               model invariants and OpenCL ↔ CPU parity
 ```
-Passes per frame: import (colour decode, Highlight Boost expansion) → 3 levels of Gaussian blur → (mask: luminance →
+Passes per frame: import (colour decode, Highlight Boost expansion) → blur pyramid (Gaussian levels a factor of 2
+apart, stored at half, quarter… resolution from 1.5 px of blur) → (mask: luminance →
 local contrast → threshold → dilation) → spectral gather (magenta/green removal in Lens Aberration, Fringe
 Saturation) → highlight compression and encode back.
 
