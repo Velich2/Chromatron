@@ -1,6 +1,6 @@
 # Chromatron
 
-Плагин хроматической аберрации «дорогой оптики» для **After Effects** и **OpenFX (DaVinci Resolve)**.
+Плагин хроматической аберрации «дорогой оптики» для **After Effects**, **Premiere Pro** и **OpenFX (DaVinci Resolve)**.
 CPU и GPU (CUDA, OpenCL, Metal) рендерят одним и тем же исходником ядер.
 
 ![preview](docs/preview.png)
@@ -74,7 +74,8 @@ src/kernels/ChromatronKernels.h   ядра одним исходником: C++ 
 src/core/                         модель: настройки → спектральные отсчёты, пирамида размытия, маска; конвейер проходов
 src/backends/                     CPU (std::thread), CUDA (stream), OpenCL (cl_mem), Metal (MTLBuffer)
 src/ofx/                          OpenFX-плагин (Resolve): CPU/CUDA/OpenCL/Metal по выбору хоста
-src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU через PF_Cmd_SMART_RENDER_GPU
+src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU через PF_Cmd_SMART_RENDER_GPU;
+                                  Premiere Pro: PF_Cmd_RENDER, BGRA 8u/32f на CPU
 tools/chromatron_cli.cpp          рендер PPM/PFM тем же конвейером
 tests/test_core.cpp               инварианты модели и паритет OpenCL ↔ CPU
 ```
