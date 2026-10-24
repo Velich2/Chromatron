@@ -4,9 +4,10 @@
 //   chromatron_cli --synthetic WxH out.ppm [options]
 //
 // Options mirror the plugin parameters:
-//   --mode sep|abr  --pair rc|gm|by|rb  --angle DEG  --distance PX  --spread 0..1
-//   --lateral PX  --balance -1..1  --cx 0..1 --cy 0..1  --threshold 0..1  --softness 0..1
-//   --show-mask  --blur PX  --samples N  --mix 0..1
+//   --mode sep|abr|phys  --pair rc|gm|by|rb  --angle DEG  --distance PX  --spread 0..1
+//   --lateral PX  --balance -1..1
+//   --correction singlet|achromat|apo  --lateral-color PX  --axial PX  --focus NM
+//   --cx 0..1 --cy 0..1  --threshold 0..1  --softness 0..1  --show-mask  --blur PX  --mix 0..1
 //   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065|dwg|dwglinear|rec709scene
 //           (encoding of the pixels; rec709 = gamma 2.4 / BT.1886)
 
@@ -266,7 +267,17 @@ int main(int argc, char** argv)
                 if (i + 1 >= argc) throw std::runtime_error("missing value for " + a);
                 return argv[++i];
             };
-            if (a == "--mode") s.mode = next() == "sep" ? Mode::Separation : Mode::Aberration;
+            if (a == "--mode") {
+                const std::string v = next();
+                s.mode = v == "sep" ? Mode::Separation : (v == "phys" ? Mode::Physical : Mode::Aberration);
+            } else if (a == "--correction") {
+                const std::string v = next();
+                s.correction = v == "achromat" ? LensCorrection::Achromat
+                               : v == "apo"    ? LensCorrection::Apochromat
+                                               : LensCorrection::Singlet;
+            } else if (a == "--lateral-color") s.lateralColor = std::stod(next());
+            else if (a == "--axial") s.axialColor = std::stod(next());
+            else if (a == "--focus") s.focusNm = std::stod(next());
             else if (a == "--pair") {
                 const std::string v = next();
                 s.pair = v == "gm" ? ColorPair::GreenMagenta
@@ -284,7 +295,6 @@ int main(int argc, char** argv)
             else if (a == "--softness") s.softness = std::stod(next());
             else if (a == "--show-mask") s.showMask = true;
             else if (a == "--blur") s.channelBlur = std::stod(next());
-            else if (a == "--samples") s.samples = std::stoi(next());
             else if (a == "--mix") s.mix = std::stod(next());
             else if (a == "--backend") backend = next();
             else if (a == "--space") {

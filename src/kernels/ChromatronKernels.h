@@ -25,6 +25,7 @@
 
 #define CK_MODE_SEPARATION 0
 #define CK_MODE_ABERRATION 1
+#define CK_MODE_PHYSICAL 2
 
 // Encoding of the host image. The optics always run on linear light.
 #define CK_TRANSFER_LINEAR 0
@@ -65,6 +66,7 @@ typedef struct CKParams {
     int useMatrix;    // host primaries differ from the working primaries
     int premultiplied; // host RGB is associated with alpha: (de|en)code the colour, not RGB*alpha
     int hostHalf;     // host buffers hold IEEE 754 half floats (Premiere GPU 16f frames)
+    int keepLuma;     // Fringe Blur: blurred taps, luminance of the unblurred ones
     float lumR;       // luminance weights of the working primaries
     float lumG;
     float lumB;
@@ -86,7 +88,8 @@ typedef struct CKParams {
     float toWork[9];      // host -> working primaries (row-major), when useMatrix
     float fromWork[9];    // working -> host primaries
     float tapT[CK_MAX_TAPS];      // displacement factor of each spectral tap
-    float tapLevel[CK_MAX_TAPS];  // blur level coordinate (0 .. numLevels-1), at the frame corner in aberration mode
+    float tapLevel[CK_MAX_TAPS];  // blur level coordinate (0 .. numLevels-1), at the frame corner in the lens modes
+    float tapLevelAxial[CK_MAX_TAPS];  // blur level coordinate over the whole frame (physical axial colour)
     float tapW[CK_MAX_TAPS * 3];  // RGB weight of each tap; every channel sums to 1
 } CKParams;
 
@@ -548,7 +551,7 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
     const float fy = (float)wy;
     // Lateral colour and its defocus vanish on the optical axis and grow towards the corners.
     float field = 1.0f;
-    if (p.mode == CK_MODE_ABERRATION) {
+    if (p.mode != CK_MODE_SEPARATION) {
         const float dx = fx - p.centerX;
         const float dy = fy - p.centerY;
         field = ck_fminf(1.0f, ck_sqrtf(dx * dx + dy * dy) * p.invHalfDiagonal);
@@ -561,6 +564,8 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
     float r = 0.0f, g = 0.0f, b = 0.0f;
     float ar = 0.0f, ag = 0.0f, ab = 0.0f;
     float mr = 0.0f, mg = 0.0f, mb = 0.0f;  // achromatic version of the same taps
+    float yr = 0.0f, yg = 0.0f, yb = 0.0f;  // Fringe Blur: the same taps unblurred
+    float yar = 0.0f, yag = 0.0f, yab = 0.0f;
     for (int i = 0; i < p.numTaps; ++i) {
         const float t = p.tapT[i];
         float sx, sy;
@@ -572,7 +577,9 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
             sx = p.centerX + (fx - p.centerX) * s;
             sy = p.centerY + (fy - p.centerY) * s;
         }
-        const float lev = p.tapLevel[i] * field;
+        // Field-dependent defocus (lens modes) and axial colour (same over the frame) add in quadrature.
+        const float lf2 = p.tapLevel[i] * field;
+        const float lev = p.tapLevelAxial[i] > 0.0f ? ck_sqrtf(lf2 * lf2 + p.tapLevelAxial[i] * p.tapLevelAxial[i]) : lf2;
         const int l0 = (int)ck_floorf(lev);
         const float lf = lev - (float)l0;
         CKPix v = ck_bilinear(ck_level(l0, L0, L1, L2, L3), p.srcWidth, p.srcHeight, sx, sy);
@@ -596,6 +603,15 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         mr += wy * v.r;
         mg += wy * v.g;
         mb += wy * v.b;
+        if (p.keepLuma) {
+            const CKPix u = ck_bilinear(L0, p.srcWidth, p.srcHeight, sx, sy);
+            yr += wr * u.r;
+            yg += wg * u.g;
+            yb += wb * u.b;
+            yar += wr * u.a;
+            yag += wg * u.a;
+            yab += wb * u.a;
+        }
     }
     if (p.cleanFringe) {
         // The dispersion's own colour is (rgb - mono). Keep its luminance and its
@@ -605,6 +621,25 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         r -= c * p.fringeAxisX;
         g -= c * p.fringeAxisY;
         b -= c * p.fringeAxisZ;
+    }
+    if (p.keepLuma) {
+        // Only the colour of the fringes softens: the blurred chromaticity at the sharp
+        // luminance (linear light), coverage from the sharp taps.
+        const float ys = p.lumR * yr + p.lumG * yg + p.lumB * yb;
+        const float yb2 = p.lumR * r + p.lumG * g + p.lumB * b;
+        if (yb2 > 1e-6f && ys > 0.0f) {
+            const float k = ys / yb2;
+            r *= k;
+            g *= k;
+            b *= k;
+        } else {
+            r = yr;
+            g = yg;
+            b = yb;
+        }
+        ar = yar;
+        ag = yag;
+        ab = yab;
     }
     // Coverage of the widest channel keeps premultiplied colour <= alpha.
     const float a = ck_fmaxf(ar, ck_fmaxf(ag, ab));

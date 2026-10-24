@@ -8,7 +8,10 @@
 
 namespace chromatron {
 
-enum class Mode { Separation = 0, Aberration = 1 };
+enum class Mode { Separation = 0, Aberration = 1, Physical = 2 };
+
+// Chromatic correction of the physical lens: wavelengths brought to a common focus.
+enum class LensCorrection { Singlet = 0, Achromat = 1, Apochromat = 2 };
 
 // Which channels travel in opposite directions in RGB separation mode.
 enum class ColorPair { RedCyan = 0, GreenMagenta = 1, BlueYellow = 2, RedBlue = 3 };
@@ -42,13 +45,20 @@ struct Settings {
     // Lens aberration
     double lateral = 5.0;    // px between spectrum ends at the frame corner (sign swaps warm/cool sides)
     double balance = 0.0;    // -1 = red end disperses (red/cyan), +1 = blue end disperses (blue/yellow)
+
+    // Physical lens: glass dispersion (Cauchy), CIE 1931 spectrum, lateral + axial colour
+    LensCorrection correction = LensCorrection::Singlet;
+    double lateralColor = 4.0;  // px between spectrum ends at the frame corner
+    double axialColor = 3.0;    // px defocus of the wavelength farthest from focus, whole frame
+    double focusNm = 550.0;     // wavelength in perfect focus
+
+    // Edge mask (every mode)
     double threshold = 0.0;  // 0 = everywhere, 1 = only the strongest light transitions
     double softness = 0.5;   // width of the threshold transition
     bool showMask = false;
 
     // Common
-    double channelBlur = 0.0;  // px defocus of the most displaced wavelengths
-    int samples = 12;          // spectral taps (quality)
+    double channelBlur = 0.0;  // Fringe Blur: px blur of the fringe colour; luminance stays sharp
     double mix = 1.0;
 };
 

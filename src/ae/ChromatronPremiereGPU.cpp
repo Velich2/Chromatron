@@ -160,13 +160,11 @@ private:
     {
         Inputs inputs;
         for (int index = P_INPUT + 1; index < P_NUM_PARAMS; ++index) {
-            if (index == P_SEP_START || index == P_SEP_END || index == P_ABR_START || index == P_ABR_END ||
-                index == P_OPTICS_START || index == P_OPTICS_END)
-                continue;
+            if (IsGroup(index)) continue;
             const PrParam p = GetParam(index, time);
             if (index == P_CENTER) {
                 SetParam(index, p.mPoint.x * width - 0.5, p.mPoint.y * height - 0.5, inputs);
-            } else if (index == P_MODE || index == P_PAIR || index == P_SPACE) {
+            } else if (index == P_MODE || index == P_PAIR || index == P_CORRECTION || index == P_SPACE) {
                 SetParam(index, numeric(p) + 1 - kPopupBase, 0, inputs);
             } else {
                 SetParam(index, numeric(p), 0, inputs);

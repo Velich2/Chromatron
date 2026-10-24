@@ -10,9 +10,18 @@
 // never turn magenta, purple or a lone green. The defocus (channel blur) is monotonic
 // along the same spectrum for the same reason.
 //
+// Physical mode follows the glass instead: refractive index n(lambda) - n0 ~ 1/lambda^2
+// (Cauchy), a focal shift per wavelength for a singlet, achromat or apochromat, CIE 1931
+// colour matching functions for the spectrum. Lateral colour (magnification) grows with
+// the field; axial colour defocuses every wavelength but the focused one over the whole
+// frame, so it also shows the purple halo of real fast lenses. No fringe cleaning.
+//
 // Separation mode splits the channels of a colour pair into two groups pushed in
 // opposite directions; "spread" smears each group along the axis with a Gaussian
 // profile (like a prism) instead of a hard digital offset.
+//
+// Fringe Blur blurs the taps but keeps the luminance of the sharp result, so only the
+// colour of the fringes softens.
 //
 // Every tap carries RGB weights that sum to one per channel, so a neutral image with no
 // displacement reproduces exactly.
@@ -33,8 +42,9 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kMaxBandingPx = 1.25;  // max distance between neighbouring taps before they must be smoothed
 
 struct Tap {
-    double t;      // displacement factor
-    double sigma;  // blur, px (corner of frame for aberration)
+    double t;           // displacement factor
+    double sigma;       // blur, px; grows with the field in the lens modes (value at the frame corner)
+    double sigmaAxial;  // blur, px, the same over the whole frame (physical axial colour)
     double w[3];
 };
 
@@ -63,17 +73,20 @@ void normalizeWeights(std::vector<Tap>& taps)
     }
 }
 
+// Wavelengths sampled at least; more are added when neighbours would sit more than
+// kMaxBandingPx apart, and gaps that remain are smoothed, so the count is never visible.
+constexpr int kBaseTaps = 12;
+
 int clampSamples(int n) { return std::max(3, std::min(CK_MAX_TAPS, n)); }
 
 std::vector<Tap> aberrationTaps(const Settings& s, double rs, const double lum[3])
 {
     const double lateralPx = std::fabs(s.lateral) * rs;
     const double blurPx = std::max(0.0, s.channelBlur) * rs;
-    int n = clampSamples(s.samples);
-    n = clampSamples(std::max(n, (int)std::ceil(lateralPx / kMaxBandingPx) + 1));
+    const int n = clampSamples(std::max(kBaseTaps, (int)std::ceil(lateralPx / kMaxBandingPx) + 1));
 
     const double b = std::max(-1.0, std::min(1.0, s.balance));
-    std::vector<Tap> taps(n);
+    std::vector<Tap> taps(n, Tap{});
     for (int i = 0; i < n; ++i) {
         const double lambda = 400.0 + 300.0 * (i + 0.5) / n;
         const double d = (550.0 - lambda) / 150.0;  // +1 blue end, -1 red end
@@ -107,6 +120,77 @@ std::vector<Tap> aberrationTaps(const Settings& s, double rs, const double lum[3
     return taps;
 }
 
+// Multi-lobe fit of the CIE 1931 2-degree colour matching functions (Wyman, Sloan, Shirley 2013).
+double lobe(double x, double mu, double invLow, double invHigh)
+{
+    const double t = (x - mu) * (x < mu ? invLow : invHigh);
+    return std::exp(-0.5 * t * t);
+}
+
+void cieRgb(double lambda, double out[3])
+{
+    const double X = 1.056 * lobe(lambda, 599.8, 0.0264, 0.0323) + 0.362 * lobe(lambda, 442.0, 0.0624, 0.0374) -
+                     0.065 * lobe(lambda, 501.1, 0.0490, 0.0382);
+    const double Y = 0.821 * lobe(lambda, 568.8, 0.0213, 0.0247) + 0.286 * lobe(lambda, 530.9, 0.0613, 0.0322);
+    const double Z = 1.217 * lobe(lambda, 437.0, 0.0845, 0.0278) + 0.681 * lobe(lambda, 459.0, 0.0385, 0.0725);
+    // XYZ -> linear Rec.709. Negative lobes are outside what a sensor records: clipped.
+    out[0] = std::max(0.0, 3.2406 * X - 1.5372 * Y - 0.4986 * Z);
+    out[1] = std::max(0.0, -0.9689 * X + 1.8758 * Y + 0.0415 * Z);
+    out[2] = std::max(0.0, 0.0557 * X - 0.2040 * Y + 1.0570 * Z);
+}
+
+// Focal shift of a wavelength, up to scale. Cauchy: n - n0 ~ u = 1/lambda^2. An achromat brings
+// the F and C lines (486 / 656 nm) to one focus and leaves the secondary spectrum, an apochromat
+// also the d line (588 nm).
+double focalShift(LensCorrection c, double lambdaNm)
+{
+    const auto u = [](double nm) { return 1e6 / (nm * nm); };
+    const double x = u(lambdaNm), uF = u(486.13), ud = u(587.56), uC = u(656.27);
+    switch (c) {
+    case LensCorrection::Achromat: return (x - uF) * (x - uC);
+    case LensCorrection::Apochromat: return (x - uF) * (x - ud) * (x - uC);
+    default: return x;
+    }
+}
+
+std::vector<Tap> physicalTaps(const Settings& s, double rs, const double lum[3])
+{
+    const double lateralPx = std::fabs(s.lateralColor) * rs;
+    const double axialPx = std::max(0.0, s.axialColor) * rs;
+    const int n = clampSamples(std::max({kBaseTaps, (int)std::ceil(lateralPx / kMaxBandingPx) + 1,
+                                         (int)std::ceil(axialPx / kMaxBandingPx) + 1}));
+    const LensCorrection c = (LensCorrection)std::max(0, std::min(2, (int)s.correction));
+
+    std::vector<Tap> taps(n, Tap{});
+    double lo = 1e300, hi = -1e300;
+    for (int i = 0; i < n; ++i) {
+        const double lambda = 400.0 + 300.0 * (i + 0.5) / n;
+        taps[i].t = focalShift(c, lambda);
+        cieRgb(lambda, taps[i].w);
+        lo = std::min(lo, taps[i].t);
+        hi = std::max(hi, taps[i].t);
+    }
+    normalizeWeights(taps);
+    // The span over the sampled spectrum is 1: Lateral Color / Axial Color are its full spread.
+    const double span = std::max(1e-12, hi - lo);
+    const double focus = (focalShift(c, std::max(400.0, std::min(700.0, s.focusNm))) - lo) / span;
+    for (Tap& t : taps) t.t = (t.t - lo) / span;
+
+    for (int i = 0; i < n; ++i) taps[i].sigmaAxial = axialPx * std::min(1.0, std::fabs(taps[i].t - focus));
+
+    double centroid = 0.0;  // the picture itself must not grow
+    for (const Tap& t : taps) centroid += (lum[0] * t.w[0] + lum[1] * t.w[1] + lum[2] * t.w[2]) * t.t;
+    for (Tap& t : taps) t.t -= centroid;
+
+    for (int i = 0; i < n; ++i) {
+        const double prev = taps[std::max(0, i - 1)].t;
+        const double next = taps[std::min(n - 1, i + 1)].t;
+        const double spacingPx = 0.5 * std::fabs(next - prev) * lateralPx * (i == 0 || i == n - 1 ? 2.0 : 1.0);
+        taps[i].sigma = spacingPx > kMaxBandingPx * 0.5 ? 0.5 * spacingPx : 0.0;
+    }
+    return taps;
+}
+
 std::vector<Tap> separationTaps(const Settings& s, double rs)
 {
     // Group of each channel: +1 moves along the angle, -1 against it, 0 stays.
@@ -127,7 +211,7 @@ std::vector<Tap> separationTaps(const Settings& s, double rs)
     int k = 1;
     if (spread > 0.005) {
         const int maxPerGroup = (CK_MAX_TAPS - (hasCentre ? 1 : 0)) / 2;
-        const int wanted = std::max(clampSamples(s.samples) / 2,
+        const int wanted = std::max(kBaseTaps / 2,
                                     (int)std::ceil(4.0 * sigmaT * halfDistPx / kMaxBandingPx));
         k = std::max(2, std::min(maxPerGroup, wanted));
     }
@@ -141,7 +225,7 @@ std::vector<Tap> separationTaps(const Settings& s, double rs)
         for (int j = 0; j < count; ++j) {
             const double z = count == 1 ? 0.0 : -2.0 + 4.0 * (j + 0.5) / count;
             const double weight = std::exp(-0.5 * z * z);
-            Tap tap;
+            Tap tap{};
             tap.t = group + z * sigmaT;
             for (int c = 0; c < 3; ++c) tap.w[c] = g[c] == group ? weight : 0.0;
             // The same defocus for every channel: a fixed channel kept sharp next to blurred
@@ -322,18 +406,30 @@ bool colorSpaceFromName(const std::string& name, ColorSpace& out)
 
 bool isIdentity(const Settings& s)
 {
-    if (s.showMask && s.mode == Mode::Aberration) return false;
+    if (s.showMask) return false;
     if (s.mix <= 0.0) return true;
-    if (s.channelBlur > 0.0) return false;
-    return s.mode == Mode::Separation ? s.distance == 0.0 : s.lateral == 0.0;
+    // Fringe Blur keeps the luminance and only softens fringes, so without them it is a no-op.
+    switch (s.mode) {
+    case Mode::Separation: return s.distance == 0.0;
+    case Mode::Aberration: return s.lateral == 0.0;
+    default: return s.lateralColor == 0.0 && s.axialColor <= 0.0;
+    }
+}
+
+// Spatial reach of the effect itself (displacement plus defocus), px at render scale.
+double effectReach(const Settings& s, double rs)
+{
+    const double blur = std::max(0.0, s.channelBlur) * rs;
+    switch (s.mode) {
+    case Mode::Separation: return 0.5 * std::fabs(s.distance) * rs * (1.0 + std::max(0.0, s.spread)) + 3.0 * blur;
+    case Mode::Aberration: return std::fabs(s.lateral) * rs + 3.0 * blur;
+    default: return std::fabs(s.lateralColor) * rs + 3.0 * std::max(0.0, s.axialColor) * rs;
+    }
 }
 
 double sampleMargin(const Settings& s, double rs)
 {
-    const double blur = 3.0 * std::max(0.0, s.channelBlur) * rs + 2.0;
-    if (s.mode == Mode::Separation)
-        return 0.5 * std::fabs(s.distance) * rs * (1.0 + std::max(0.0, s.spread)) + blur;
-    double m = std::fabs(s.lateral) * rs + blur;
+    double m = effectReach(s, rs) + 2.0;
     if (s.threshold > 0.0) m += 3.0 * (0.5 * m + 4.0 * rs);
     return m;
 }
@@ -372,41 +468,53 @@ Plan buildPlan(const Settings& s, const Geometry& g)
         p.dirY = (float)(std::sin(a) * half);
         taps = separationTaps(s, rs);
     } else {
-        p.mode = CK_MODE_ABERRATION;
+        const bool physical = s.mode == Mode::Physical;
+        p.mode = physical ? CK_MODE_PHYSICAL : CK_MODE_ABERRATION;
         const double hd = std::max(1.0, g.halfDiagonal);
         p.centerX = (float)g.centerX;
         p.centerY = (float)g.centerY;
         // Taps sit within |t| < 1, so |radialScale| <= 0.5 keeps the per-tap magnification
         // 1 + t * radialScale >= 0.5, far from the pole at 0 (Lateral can exceed a tiny frame).
-        p.radialScale = (float)std::max(-0.5, std::min(0.5, s.lateral * rs / hd));
+        const double lateral = physical ? s.lateralColor : s.lateral;
+        p.radialScale = (float)std::max(-0.5, std::min(0.5, lateral * rs / hd));
         p.invHalfDiagonal = (float)(1.0 / hd);
-        taps = aberrationTaps(s, rs, lum);
-        setupFringeCleaning(p, s.balance, workInAP1(s.space));
-
-        if (s.threshold > 0.0005) {
-            const double th = std::min(1.0, s.threshold);
-            const double soft = std::max(0.0, std::min(1.0, s.softness));
-            p.useMask = 1;
-            p.maskHigh = (float)th;
-            p.maskLow = (float)std::min(th * (1.0 - soft), th - 1e-4);
-            const double effect = std::fabs(s.lateral) * rs + 2.0 * std::max(0.0, s.channelBlur) * rs;
-            plan.detectSigma = (float)std::max(1.5 * rs, 0.35 * effect);
-            plan.spreadRadius = (int)std::ceil(0.5 * effect + rs);
-            plan.spreadSigma = (float)std::max(1.0, 0.5 * plan.spreadRadius);
+        if (physical) {
+            taps = physicalTaps(s, rs, lum);
+        } else {
+            taps = aberrationTaps(s, rs, lum);
+            setupFringeCleaning(p, s.balance, workInAP1(s.space));
         }
-        p.showMask = s.showMask ? 1 : 0;
     }
+    // Fringe Blur: keep the luminance of the unblurred taps (the physical lens defocuses for real).
+    p.keepLuma = s.mode != Mode::Physical && s.channelBlur > 0.0 ? 1 : 0;
+
+    if (s.threshold > 0.0005) {
+        const double th = std::min(1.0, s.threshold);
+        const double soft = std::max(0.0, std::min(1.0, s.softness));
+        p.useMask = 1;
+        p.maskHigh = (float)th;
+        p.maskLow = (float)std::min(th * (1.0 - soft), th - 1e-4);
+        const double effect = effectReach(s, rs);
+        plan.detectSigma = (float)std::max(1.5 * rs, 0.35 * effect);
+        plan.spreadRadius = (int)std::ceil(0.5 * effect + rs);
+        plan.spreadSigma = (float)std::max(1.0, 0.5 * plan.spreadRadius);
+    }
+    p.showMask = s.showMask ? 1 : 0;
 
     p.numTaps = (int)taps.size();
+    // Level k holds the source blurred by k / (levels - 1) * maxSigma, so a tap's level
+    // coordinate is linear in its sigma; the kernel combines both parts per pixel.
     double maxSigma = 0.0;
-    for (const Tap& t : taps) maxSigma = std::max(maxSigma, t.sigma);
+    for (const Tap& t : taps) maxSigma = std::max(maxSigma, std::hypot(t.sigma, t.sigmaAxial));
     p.numLevels = maxSigma > 0.3 ? CK_MAX_LEVELS : 1;
     for (int k = 1; k < p.numLevels; ++k)
         plan.levelBlur[k] = (float)(maxSigma / (CK_MAX_LEVELS - 1) * std::sqrt(2.0 * k - 1.0));
 
     for (int i = 0; i < p.numTaps; ++i) {
         p.tapT[i] = (float)taps[i].t;
-        p.tapLevel[i] = p.numLevels > 1 ? (float)(taps[i].sigma / maxSigma * (p.numLevels - 1)) : 0.0f;
+        const double toLevel = p.numLevels > 1 ? (p.numLevels - 1) / maxSigma : 0.0;
+        p.tapLevel[i] = (float)(taps[i].sigma * toLevel);
+        p.tapLevelAxial[i] = (float)(taps[i].sigmaAxial * toLevel);
         for (int c = 0; c < 3; ++c) p.tapW[i * 3 + c] = (float)taps[i].w[c];
     }
     return plan;

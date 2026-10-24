@@ -34,12 +34,15 @@ const char* const kDistance = "distance";
 const char* const kSpread = "spread";
 const char* const kLateral = "lateral";
 const char* const kBalance = "balance";
+const char* const kCorrection = "correction";
+const char* const kLateralColor = "lateralColor";
+const char* const kAxialColor = "axialColor";
+const char* const kFocus = "focusWavelength";
 const char* const kCenter = "center";
 const char* const kThreshold = "threshold";
 const char* const kSoftness = "softness";
 const char* const kShowMask = "showMask";
-const char* const kBlur = "channelBlur";
-const char* const kSamples = "samples";
+const char* const kBlur = "channelBlur";  // shown as Fringe Blur
 const char* const kMix = "mix";
 const char* const kUseGpu = "useGpu";
 
@@ -57,12 +60,15 @@ public:
         spread_ = fetchDoubleParam(kSpread);
         lateral_ = fetchDoubleParam(kLateral);
         balance_ = fetchDoubleParam(kBalance);
+        correction_ = fetchChoiceParam(kCorrection);
+        lateralColor_ = fetchDoubleParam(kLateralColor);
+        axialColor_ = fetchDoubleParam(kAxialColor);
+        focus_ = fetchDoubleParam(kFocus);
         center_ = fetchDouble2DParam(kCenter);
         threshold_ = fetchDoubleParam(kThreshold);
         softness_ = fetchDoubleParam(kSoftness);
         showMask_ = fetchBooleanParam(kShowMask);
         blur_ = fetchDoubleParam(kBlur);
-        samples_ = fetchIntParam(kSamples);
         mix_ = fetchDoubleParam(kMix);
         useGpu_ = fetchBooleanParam(kUseGpu);
         updateEnabled();
@@ -89,7 +95,7 @@ private:
         cx::Settings s;
         int v = 0;
         mode_->getValueAtTime(t, v);
-        s.mode = v == 0 ? cx::Mode::Separation : cx::Mode::Aberration;
+        s.mode = v == 0 ? cx::Mode::Separation : (v == 1 ? cx::Mode::Aberration : cx::Mode::Physical);
         space_->getValueAtTime(t, v);
         s.space = v == kSpaceAuto ? hostColorSpace() : (cx::ColorSpace)v;
         pair_->getValueAtTime(t, v);
@@ -99,11 +105,15 @@ private:
         s.spread = spread_->getValueAtTime(t);
         s.lateral = lateral_->getValueAtTime(t);
         s.balance = balance_->getValueAtTime(t);
+        correction_->getValueAtTime(t, v);
+        s.correction = (cx::LensCorrection)v;
+        s.lateralColor = lateralColor_->getValueAtTime(t);
+        s.axialColor = axialColor_->getValueAtTime(t);
+        s.focusNm = focus_->getValueAtTime(t);
         s.threshold = threshold_->getValueAtTime(t);
         s.softness = softness_->getValueAtTime(t);
         s.showMask = showMask_->getValueAtTime(t);
         s.channelBlur = blur_->getValueAtTime(t);
-        s.samples = samples_->getValueAtTime(t);
         s.mix = mix_->getValueAtTime(t);
         return s;
     }
@@ -126,17 +136,19 @@ private:
     {
         int v = 0;
         mode_->getValue(v);
-        const bool sep = v == 0;
+        const bool sep = v == 0, abr = v == 1, phys = v == 2;
         pair_->setEnabled(sep);
         angle_->setEnabled(sep);
         distance_->setEnabled(sep);
         spread_->setEnabled(sep);
-        lateral_->setEnabled(!sep);
-        balance_->setEnabled(!sep);
+        lateral_->setEnabled(abr);
+        balance_->setEnabled(abr);
+        correction_->setEnabled(phys);
+        lateralColor_->setEnabled(phys);
+        axialColor_->setEnabled(phys);
+        focus_->setEnabled(phys);
         center_->setEnabled(!sep);
-        threshold_->setEnabled(!sep);
-        softness_->setEnabled(!sep);
-        showMask_->setEnabled(!sep);
+        blur_->setEnabled(!phys);  // the physical lens defocuses through Axial Color
     }
 
     std::unique_ptr<cx::Backend> backendFor(const RenderArguments& args) const
@@ -165,12 +177,15 @@ private:
     DoubleParam* spread_ = nullptr;
     DoubleParam* lateral_ = nullptr;
     DoubleParam* balance_ = nullptr;
+    ChoiceParam* correction_ = nullptr;
+    DoubleParam* lateralColor_ = nullptr;
+    DoubleParam* axialColor_ = nullptr;
+    DoubleParam* focus_ = nullptr;
     Double2DParam* center_ = nullptr;
     DoubleParam* threshold_ = nullptr;
     DoubleParam* softness_ = nullptr;
     BooleanParam* showMask_ = nullptr;
     DoubleParam* blur_ = nullptr;
-    IntParam* samples_ = nullptr;
     DoubleParam* mix_ = nullptr;
     BooleanParam* useGpu_ = nullptr;
 };
@@ -312,9 +327,11 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
 
     ChoiceParamDescriptor* mode = desc.defineChoiceParam(kMode);
     mode->setLabels("Mode", "Mode", "Mode");
-    mode->setHint("RGB Separation: a colour pair pushed apart. Lens Aberration: lateral colour of real glass.");
+    mode->setHint("RGB Separation: a colour pair pushed apart. Lens Aberration: stylised lateral colour, never "
+                  "magenta or green. Physical Lens: glass dispersion with lateral and axial colour.");
     mode->appendOption("RGB Separation");
     mode->appendOption("Lens Aberration");
+    mode->appendOption("Physical Lens");
     mode->setDefault(0);
     page->addChild(*mode);
 
@@ -343,38 +360,52 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     defineDouble(desc, kBalance, "Fringe Balance",
                  "-1 red-orange / cyan, 0 orange / teal, +1 golden / azure. Never magenta, purple or green.", 0.0,
                  -1.0, 1.0, -1.0, 1.0, abr, page);
-    Double2DParamDescriptor* center = desc.defineDouble2DParam(kCenter);
-    center->setLabels("Optical Center", "Optical Center", "Optical Center");
-    center->setHint("Optical axis, normalised frame coordinates (0.5, 0.5 = frame centre).");
-    center->setDefault(0.5, 0.5);
-    center->setRange(-1.0, -1.0, 2.0, 2.0);
-    center->setDisplayRange(0.0, 0.0, 1.0, 1.0);
-    center->setParent(*abr);
-    page->addChild(*center);
+
+    GroupParamDescriptor* phys = defineGroup(desc, "physicalGroup", "Physical Lens", page);
+    ChoiceParamDescriptor* correction = desc.defineChoiceParam(kCorrection);
+    correction->setLabels("Correction", "Correction", "Correction");
+    correction->setHint("Singlet: uncorrected glass. Achromat: F and C lines share a focus (secondary spectrum, "
+                        "purple / green). Apochromat: three wavelengths share a focus.");
+    correction->appendOption("Singlet (uncorrected)");
+    correction->appendOption("Achromat");
+    correction->appendOption("Apochromat");
+    correction->setDefault(0);
+    correction->setParent(*phys);
+    page->addChild(*correction);
+    defineDouble(desc, kLateralColor, "Lateral Color",
+                 "Spread of the spectrum at the frame corner (magnification per wavelength), pixels.", 4.0, -500.0,
+                 500.0, -40.0, 40.0, phys, page);
+    defineDouble(desc, kAxialColor, "Axial Color",
+                 "Defocus of the wavelengths farthest from focus, pixels, over the whole frame (purple halo).", 3.0,
+                 0.0, 200.0, 0.0, 20.0, phys, page);
+    defineDouble(desc, kFocus, "Focus Wavelength", "Wavelength in perfect focus, nm.", 550.0, 400.0, 700.0, 400.0,
+                 700.0, phys, page);
+
+    GroupParamDescriptor* mask = defineGroup(desc, "maskGroup", "Edge Mask", page);
     defineDouble(desc, kThreshold, "Contrast Threshold",
-                 "0 = everywhere; higher values keep the aberration only on strong light transitions.", 0.0, 0.0, 1.0,
-                 0.0, 1.0, abr, page);
+                 "0 = everywhere; higher values keep the effect only on strong light transitions.", 0.0, 0.0, 1.0,
+                 0.0, 1.0, mask, page);
     defineDouble(desc, kSoftness, "Threshold Softness", "Width of the threshold transition.", 0.5, 0.0, 1.0, 0.0, 1.0,
-                 abr, page);
+                 mask, page);
     BooleanParamDescriptor* showMask = desc.defineBooleanParam(kShowMask);
     showMask->setLabels("Show Mask", "Show Mask", "Show Mask");
     showMask->setHint("Display where fringes appear: black = untouched, white = strong fringe. Includes the "
                       "threshold, mix and growth towards the frame corners.");
     showMask->setDefault(false);
-    showMask->setParent(*abr);
+    showMask->setParent(*mask);
     page->addChild(*showMask);
 
     GroupParamDescriptor* optics = defineGroup(desc, "opticsGroup", "Optics", page);
-    defineDouble(desc, kBlur, "Channel Blur", "Defocus of the most displaced wavelengths, pixels.", 0.0, 0.0, 200.0, 0.0,
-                 20.0, optics, page);
-    IntParamDescriptor* samples = desc.defineIntParam(kSamples);
-    samples->setLabels("Spectral Samples", "Spectral Samples", "Spectral Samples");
-    samples->setHint("Quality: wavelengths per frame (raised automatically for large offsets).");
-    samples->setDefault(12);
-    samples->setRange(3, CK_MAX_TAPS);
-    samples->setDisplayRange(3, CK_MAX_TAPS);
-    samples->setParent(*optics);
-    page->addChild(*samples);
+    Double2DParamDescriptor* center = desc.defineDouble2DParam(kCenter);
+    center->setLabels("Optical Center", "Optical Center", "Optical Center");
+    center->setHint("Optical axis of the lens modes, normalised frame coordinates (0.5, 0.5 = frame centre).");
+    center->setDefault(0.5, 0.5);
+    center->setRange(-1.0, -1.0, 2.0, 2.0);
+    center->setDisplayRange(0.0, 0.0, 1.0, 1.0);
+    center->setParent(*optics);
+    page->addChild(*center);
+    defineDouble(desc, kBlur, "Fringe Blur", "Softens the colour of the fringes, pixels; image detail stays sharp.",
+                 0.0, 0.0, 200.0, 0.0, 20.0, optics, page);
     defineDouble(desc, kMix, "Mix", "Blend with the original.", 1.0, 0.0, 1.0, 0.0, 1.0, optics, page);
 
     BooleanParamDescriptor* useGpu = desc.defineBooleanParam(kUseGpu);

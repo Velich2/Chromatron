@@ -9,6 +9,8 @@
 
 namespace chromatron::ae {
 
+// Parameter order as shown in the effect controls. After Effects matches saved projects by
+// disk ID (ChromatronAE.cpp), so groups can be rearranged.
 enum {
     P_INPUT = 0,
     P_MODE,
@@ -21,20 +23,35 @@ enum {
     P_ABR_START,
     P_LATERAL,
     P_BALANCE,
-    P_CENTER,
+    P_ABR_END,
+    P_PHYS_START,
+    P_CORRECTION,
+    P_LATERAL_COLOR,
+    P_AXIAL_COLOR,
+    P_FOCUS,
+    P_PHYS_END,
+    P_MASK_START,
     P_THRESHOLD,
     P_SOFTNESS,
     P_SHOW_MASK,
-    P_ABR_END,
+    P_MASK_END,
     P_OPTICS_START,
+    P_CENTER,
     P_BLUR,
-    P_SAMPLES,
     P_MIX,
     P_OPTICS_END,
     P_USE_GPU,
     P_SPACE,
     P_NUM_PARAMS
 };
+
+// Topic start / end entries carry no value.
+inline bool IsGroup(int index)
+{
+    return index == P_SEP_START || index == P_SEP_END || index == P_ABR_START || index == P_ABR_END ||
+           index == P_PHYS_START || index == P_PHYS_END || index == P_MASK_START || index == P_MASK_END ||
+           index == P_OPTICS_START || index == P_OPTICS_END;
+}
 
 // Every parameter at the current time (SmartFX and the GPU filter get no params[] array).
 struct Inputs {
@@ -51,7 +68,7 @@ inline void SetParam(int index, double v, double y, Inputs& out)
 {
     Settings& s = out.settings;
     switch (index) {
-    case P_MODE: s.mode = v == 1 ? Mode::Separation : Mode::Aberration; break;
+    case P_MODE: s.mode = v <= 1 ? Mode::Separation : (v == 2 ? Mode::Aberration : Mode::Physical); break;
     case P_SPACE:
         // Popup values are stored in projects: the fixed encodings keep their positions, Auto is item 11.
         out.autoSpace = v >= 11;
@@ -63,6 +80,10 @@ inline void SetParam(int index, double v, double y, Inputs& out)
     case P_SPREAD: s.spread = v; break;
     case P_LATERAL: s.lateral = v; break;
     case P_BALANCE: s.balance = v; break;
+    case P_CORRECTION: s.correction = (LensCorrection)std::max(0, std::min(2, (int)v - 1)); break;
+    case P_LATERAL_COLOR: s.lateralColor = v; break;
+    case P_AXIAL_COLOR: s.axialColor = v; break;
+    case P_FOCUS: s.focusNm = v; break;
     case P_CENTER:
         out.centerX = v;
         out.centerY = y;
@@ -71,7 +92,6 @@ inline void SetParam(int index, double v, double y, Inputs& out)
     case P_SOFTNESS: s.softness = v; break;
     case P_SHOW_MASK: s.showMask = v != 0; break;
     case P_BLUR: s.channelBlur = v; break;
-    case P_SAMPLES: s.samples = (int)v; break;
     case P_MIX: s.mix = v / 100.0; break;
     case P_USE_GPU: out.useGpu = v != 0; break;
     default: break;  // input layer, topic groups

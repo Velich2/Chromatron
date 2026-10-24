@@ -54,8 +54,16 @@ enum {
     ID_MIX,
     ID_OPTICS_END,
     ID_SPACE,
-    ID_USE_GPU
-};
+    ID_USE_GPU,
+    ID_PHYS_START,
+    ID_CORRECTION,
+    ID_LATERAL_COLOR,
+    ID_AXIAL_COLOR,
+    ID_FOCUS,
+    ID_PHYS_END,
+    ID_MASK_START,
+    ID_MASK_END
+};  // ID_SAMPLES is retired (Spectral Samples is automatic now)
 
 // Scoped PICA suite acquisition.
 template <class T>
@@ -144,7 +152,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     PF_ParamDef def;
 
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Mode", 2, 1, "RGB Separation|Lens Aberration", ID_MODE);
+    PF_ADD_POPUP("Mode", 3, 1, "RGB Separation|Lens Aberration|Physical Lens", ID_MODE);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("RGB Separation", ID_SEP_START);
@@ -166,7 +174,23 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Fringe Balance", -1, 1, -1, 1, 0, PF_Precision_HUNDREDTHS, 0, 0, ID_BALANCE);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POINT("Optical Center", 50, 50, FALSE, ID_CENTER);
+    PF_END_TOPIC(ID_ABR_END);
+
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Physical Lens", ID_PHYS_START);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POPUP("Correction", 3, 1, "Singlet (uncorrected)|Achromat|Apochromat", ID_CORRECTION);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Lateral Color", -500, 500, -40, 40, 4, PF_Precision_TENTHS, 0, 0, ID_LATERAL_COLOR);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Axial Color", 0, 200, 0, 20, 3, PF_Precision_TENTHS, 0, 0, ID_AXIAL_COLOR);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Focus Wavelength", 400, 700, 400, 700, 550, PF_Precision_INTEGER, 0, 0, ID_FOCUS);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(ID_PHYS_END);
+
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Edge Mask", ID_MASK_START);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Contrast Threshold", 0, 1, 0, 1, 0, PF_Precision_HUNDREDTHS, 0, 0, ID_THRESHOLD);
     AEFX_CLR_STRUCT(def);
@@ -174,14 +198,14 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_CHECKBOXX("Show Mask", FALSE, 0, ID_SHOW_MASK);
     AEFX_CLR_STRUCT(def);
-    PF_END_TOPIC(ID_ABR_END);
+    PF_END_TOPIC(ID_MASK_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Optics", ID_OPTICS_START);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Channel Blur", 0, 200, 0, 20, 0, PF_Precision_TENTHS, 0, 0, ID_BLUR);
+    PF_ADD_POINT("Optical Center", 50, 50, FALSE, ID_CENTER);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_SLIDER("Spectral Samples", 3, CK_MAX_TAPS, 3, CK_MAX_TAPS, 12, ID_SAMPLES);
+    PF_ADD_FLOAT_SLIDERX("Fringe Blur", 0, 200, 0, 20, 0, PF_Precision_TENTHS, 0, 0, ID_BLUR);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, 100, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIX);
     AEFX_CLR_STRUCT(def);
@@ -204,7 +228,8 @@ PF_Err UpdateParamsUI(PF_InData* in, PF_OutData*, PF_ParamDef* params[])
 {
     Suite<PF_ParamUtilsSuite3> utils(in, kPFParamUtilsSuite, kPFParamUtilsSuiteVersion3);
     if (!utils) return PF_Err_BAD_CALLBACK_PARAM;
-    const bool sep = params[P_MODE]->u.pd.value == 1;
+    const A_long mode = params[P_MODE]->u.pd.value;
+    const bool sep = mode <= 1, abr = mode == 2, phys = mode >= 3;
     PF_Err err = PF_Err_NONE;
     auto enable = [&](int index, bool on) {
         PF_ParamDef def = *params[index];
@@ -215,7 +240,10 @@ PF_Err UpdateParamsUI(PF_InData* in, PF_OutData*, PF_ParamDef* params[])
         err = utils->PF_UpdateParamUI(in->effect_ref, index, &def);
     };
     for (int i : {P_PAIR, P_ANGLE, P_DISTANCE, P_SPREAD}) enable(i, sep);
-    for (int i : {P_LATERAL, P_BALANCE, P_CENTER, P_THRESHOLD, P_SOFTNESS, P_SHOW_MASK}) enable(i, !sep);
+    for (int i : {P_LATERAL, P_BALANCE}) enable(i, abr);
+    for (int i : {P_CORRECTION, P_LATERAL_COLOR, P_AXIAL_COLOR, P_FOCUS}) enable(i, phys);
+    enable(P_CENTER, !sep);
+    enable(P_BLUR, !phys);  // the physical lens defocuses through Axial Color
     return err;
 }
 
@@ -235,16 +263,19 @@ void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
     switch (index) {
     case P_MODE:
     case P_PAIR:
-    case P_SPACE: SetParam(index, d.u.pd.value, 0, out); break;
+    case P_SPACE:
+    case P_CORRECTION: SetParam(index, d.u.pd.value, 0, out); break;
     case P_ANGLE: SetParam(index, FIX_2_FLOAT(d.u.ad.value), 0, out); break;
     case P_CENTER: SetParam(index, FIX_2_FLOAT(d.u.td.x_value), FIX_2_FLOAT(d.u.td.y_value), out); break;
     case P_SHOW_MASK:
     case P_USE_GPU: SetParam(index, d.u.bd.value, 0, out); break;
-    case P_SAMPLES: SetParam(index, d.u.sd.value, 0, out); break;
     case P_DISTANCE:
     case P_SPREAD:
     case P_LATERAL:
     case P_BALANCE:
+    case P_LATERAL_COLOR:
+    case P_AXIAL_COLOR:
+    case P_FOCUS:
     case P_THRESHOLD:
     case P_SOFTNESS:
     case P_BLUR:
@@ -257,9 +288,7 @@ PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
 {
     PF_Err err = PF_Err_NONE;
     for (int index = P_INPUT + 1; index < P_NUM_PARAMS && !err; ++index) {
-        if (index == P_SEP_START || index == P_SEP_END || index == P_ABR_START || index == P_ABR_END ||
-            index == P_OPTICS_START || index == P_OPTICS_END)
-            continue;
+        if (IsGroup(index)) continue;
         PF_ParamDef def;
         AEFX_CLR_STRUCT(def);
         err = PF_CHECKOUT_PARAM(in_data, index, in_data->current_time, in_data->time_step, in_data->time_scale, &def);
