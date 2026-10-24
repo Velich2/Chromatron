@@ -108,7 +108,7 @@ Settings aberration()
 
 void testWeights()
 {
-    for (int mode = 0; mode < 2; ++mode)
+    for (int mode = 0; mode < 3; ++mode)
         for (int pair = 0; pair < 4; ++pair)
             for (double spread : {0.0, 0.4, 1.0}) {
                 Settings s = aberration();
@@ -116,6 +116,7 @@ void testWeights()
                 s.pair = (ColorPair)pair;
                 s.spread = spread;
                 s.balance = spread - 0.5;
+                s.correction = (LensCorrection)(pair % 3);
                 const Plan plan = buildPlan(s, fullGeometry(64, 64));
                 for (int c = 0; c < 3; ++c) {
                     double sum = 0.0;
@@ -143,6 +144,9 @@ void testFlatField()
     s.mode = Mode::Separation;
     s.spread = 0.5;
     expect(maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) < 1e-5f, "flat colour field is unchanged (separation)");
+    s.mode = Mode::Physical;
+    s.correction = LensCorrection::Achromat;
+    expect(maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) < 1e-5f, "flat colour field is unchanged (physical)");
 }
 
 void testIdentity()
@@ -154,7 +158,7 @@ void testIdentity()
     s.channelBlur = 0.0;
     expect(isIdentity(s), "zero separation reports identity");
     expect(maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) < 1e-6f, "zero separation renders identity");
-    // Channel blur alone must stay neutral in every pair (green fixed included).
+    // Fringe Blur alone must stay neutral in every pair (green fixed included).
     s.channelBlur = 3.0;
     for (int pair = 0; pair < 4; ++pair) {
         s.pair = (ColorPair)pair;
@@ -163,13 +167,19 @@ void testIdentity()
         for (size_t i = 0; i < out.size(); i += 4)
             chroma = std::fmax(chroma, std::fabs(out[i] - out[i + 1]) + std::fabs(out[i + 2] - out[i + 1]));
         char what[96];
-        std::snprintf(what, sizeof(what), "zero separation with channel blur stays neutral, pair %d (%.2g)", pair,
+        std::snprintf(what, sizeof(what), "zero separation with fringe blur stays neutral, pair %d (%.2g)", pair,
                       chroma);
         expect(chroma < 1e-4f, what);
     }
     s = aberration();
     s.mix = 0.0;
     expect(maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) == 0.0f, "mix 0 renders identity");
+    s = Settings();
+    s.mode = Mode::Physical;
+    s.lateralColor = 0.0;
+    s.axialColor = 0.0;
+    expect(isIdentity(s) && maxDiff(runCpu(s, fullGeometry(f.w, f.h), f.px), f.px) < 1e-5f,
+           "physical lens without lateral or axial colour renders identity");
 }
 
 // The core promise of the aberration mode: on neutral input, fringes stay on the
@@ -393,8 +403,9 @@ void testDaVinciWideGamut()
 // encoded RGB equals alpha (decoding RGB*alpha directly would darken the edge).
 void testPremultipliedEdge(bool premultiplied)
 {
+    // Premultiplied white over a soft alpha ramp.
     const Frame f = makeFrame(64, 16, [](int x, int, float* px) {
-        const float a = x < 32 ? 0.0f : 1.0f;
+        const float a = std::fmin(1.0f, std::fmax(0.0f, (x - 24) / 16.0f));
         px[0] = px[1] = px[2] = px[3] = a;
     });
     Settings s;
@@ -459,6 +470,107 @@ void testColorSpaceNames()
 }
 
 // Lateral far larger than the frame must not reach the 1 / (1 + t * k) pole.
+// Fringe Blur softens the colour of the fringes only: the luminance equals the unblurred render.
+void testFringeBlur()
+{
+    const Frame f = neutralChart(96, 48);
+    Settings s;
+    s.mode = Mode::Separation;
+    s.space = ColorSpace::LinearRec709;
+    s.pair = ColorPair::RedCyan;
+    s.distance = 6.0;
+    s.angleDeg = 0.0;
+    s.spread = 0.0;
+    s.channelBlur = 0.0;
+    const Geometry g = fullGeometry(f.w, f.h);
+    const std::vector<float> sharp = runCpu(s, g, f.px);
+    s.channelBlur = 4.0;
+    const std::vector<float> soft = runCpu(s, g, f.px);
+    const CKParams p = buildPlan(s, g).params;
+    float lumDiff = 0.0f, chromaSharp = 0.0f, chromaSoft = 0.0f;
+    for (int y = 0; y < f.h; ++y)
+        for (int x = 1; x < f.w; ++x) {
+            const size_t i = ((size_t)y * f.w + x) * 4, j = i - 4;
+            auto lum = [&](const std::vector<float>& v, size_t k) {
+                return p.lumR * v[k] + p.lumG * v[k + 1] + p.lumB * v[k + 2];
+            };
+            lumDiff = std::fmax(lumDiff, std::fabs(lum(sharp, i) - lum(soft, i)));
+            // Pixel-to-pixel change of the chroma (r - g): blurred fringes change gently.
+            chromaSharp = std::fmax(chromaSharp, std::fabs((sharp[i] - sharp[i + 1]) - (sharp[j] - sharp[j + 1])));
+            chromaSoft = std::fmax(chromaSoft, std::fabs((soft[i] - soft[i + 1]) - (soft[j] - soft[j + 1])));
+        }
+    char what[128];
+    std::snprintf(what, sizeof(what), "fringe blur keeps luminance (%.2g) and softens the fringe colour (%.2g -> %.2g)",
+                  lumDiff, chromaSharp, chromaSoft);
+    expect(lumDiff < 1e-4f && chromaSoft < 0.6f * chromaSharp, what);
+}
+
+// The physical lens shows what real glass does: an achromat's secondary spectrum puts
+// green on one side of an edge and magenta on the other; the axial colour of a singlet
+// focused on green leaves a purple halo (red and blue defocused) even at the optical centre.
+void testPhysical()
+{
+    const Frame f = neutralChart(160, 90);
+    const Geometry g = fullGeometry(f.w, f.h);
+    Settings s;
+    s.mode = Mode::Physical;
+    s.space = ColorSpace::LinearRec709;
+    s.correction = LensCorrection::Achromat;
+    s.lateralColor = 10.0;
+    s.axialColor = 0.0;
+    std::vector<float> out = runCpu(s, g, f.px);
+    float green = 0.0f, magenta = 0.0f;
+    for (size_t i = 0; i < out.size(); i += 4) {
+        const float m = 0.5f * (out[i] + out[i + 2]) - out[i + 1];
+        magenta = std::fmax(magenta, m);
+        green = std::fmax(green, -m);
+    }
+    char what[128];
+    std::snprintf(what, sizeof(what), "achromat: secondary spectrum, green (%.2g) and magenta (%.2g) fringes", green,
+                  magenta);
+    expect(green > 0.02f && magenta > 0.02f, what);
+
+    // A bright dot at the optical centre: no lateral colour there, only axial.
+    const Frame dot = makeFrame(64, 64, [](int x, int y, float* px) {
+        const float v = (x - 32) * (x - 32) + (y - 32) * (y - 32) <= 4 ? 4.0f : 0.0f;
+        px[0] = px[1] = px[2] = v;
+        px[3] = 1.0f;
+    });
+    s.correction = LensCorrection::Singlet;
+    s.lateralColor = 0.0;
+    s.axialColor = 4.0;
+    s.focusNm = 550.0;
+    out = runCpu(s, fullGeometry(dot.w, dot.h), dot.px);
+    const float* halo = &out[((size_t)32 * dot.w + 32 + 5) * 4];  // just outside the dot
+    std::snprintf(what, sizeof(what), "singlet focused on green: purple halo (r %.3g, g %.3g, b %.3g)", halo[0],
+                  halo[1], halo[2]);
+    expect(halo[0] > halo[1] && halo[2] > halo[1], what);
+}
+
+// Contrast Threshold applies to RGB Separation too: weak edges stay untouched.
+void testSeparationMask()
+{
+    const Frame f = makeFrame(128, 32, [](int x, int, float* px) {
+        float v = x < 32 ? 0.50f : (x < 64 ? 0.52f : (x < 96 ? 0.0f : 1.0f));
+        px[0] = px[1] = px[2] = v;
+        px[3] = 1.0f;
+    });
+    Settings s;
+    s.mode = Mode::Separation;
+    s.space = ColorSpace::LinearRec709;
+    s.distance = 6.0;
+    s.angleDeg = 0.0;
+    s.threshold = 0.6;
+    const std::vector<float> out = runCpu(s, fullGeometry(f.w, f.h), f.px);
+    float weak = 0.0f, strong = 0.0f;
+    for (int x = 24; x < 40; ++x) weak = std::fmax(weak, std::fabs(out[(16 * f.w + x) * 4] - f.px[(16 * f.w + x) * 4]));
+    for (int x = 88; x < 104; ++x)
+        strong = std::fmax(strong, std::fabs(out[(16 * f.w + x) * 4] - f.px[(16 * f.w + x) * 4]));
+    char what[96];
+    std::snprintf(what, sizeof(what), "separation threshold: weak edge %.2g, strong edge %.2g", weak, strong);
+    expect(weak < 1e-3f && strong > 0.1f, what);
+}
+
 void testRadialPole()
 {
     const Frame f = neutralChart(128, 128);
@@ -541,9 +653,10 @@ void testOpenCL()
     cl_int err;
     cl_context ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
     cl_command_queue q = clCreateCommandQueue(ctx, device, 0, &err);
-    for (int mode = 0; mode < 2; ++mode) {
+    for (int mode = 0; mode < 3; ++mode) {
         Settings s = aberration();
         s.mode = (Mode)mode;
+        s.correction = LensCorrection::Achromat;
         s.threshold = 0.4;
         s.distance = 9.0;
         s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
@@ -603,9 +716,10 @@ void testOpenCL()
 #if CHROMATRON_HAS_METAL
 void testMetal()
 {
-    for (int mode = 0; mode < 2; ++mode) {
+    for (int mode = 0; mode < 3; ++mode) {
         Settings s = aberration();
         s.mode = (Mode)mode;
+        s.correction = LensCorrection::Achromat;
         s.threshold = 0.4;
         s.distance = 9.0;
         s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
@@ -650,6 +764,9 @@ int main()
     testPremultipliedEdge(true);
     testRadialPole();
     testHalfHost();
+    testFringeBlur();
+    testPhysical();
+    testSeparationMask();
     testColorSpaceNames();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
