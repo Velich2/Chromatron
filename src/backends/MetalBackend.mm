@@ -21,6 +21,7 @@ struct Pipelines {
     id<MTLComputePipelineState> import_;
     id<MTLComputePipelineState> luma;
     id<MTLComputePipelineState> blur;
+    id<MTLComputePipelineState> downsample;
     id<MTLComputePipelineState> contrast;
     id<MTLComputePipelineState> gather;
 };
@@ -56,6 +57,7 @@ Pipelines pipelinesFor(id<MTLDevice> device)
     p.import_ = make("k_import");
     p.luma = make("k_luma");
     p.blur = make("k_blur");
+    p.downsample = make("k_downsample");
     p.contrast = make("k_contrast");
     p.gather = make("k_gather");
     cache[key] = p;  // the map keeps the device's pipelines alive for the plug-in's lifetime
@@ -117,6 +119,15 @@ public:
         });
     }
 
+    void downsample(const CKBlurParams& b, const void* src, void* dst) override
+    {
+        dispatch(pipelines_.downsample, b.width, b.height, ^(id<MTLComputeCommandEncoder> enc) {
+          [enc setBytes:&b length:sizeof(b) atIndex:0];
+          [enc setBuffer:B(src) offset:0 atIndex:1];
+          [enc setBuffer:B(dst) offset:0 atIndex:2];
+        });
+    }
+
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
         dispatch(pipelines_.contrast, p.srcWidth, p.srcHeight, ^(id<MTLComputeCommandEncoder> enc) {
@@ -129,22 +140,25 @@ public:
 
     void gather(const CKParams& p, const void* const levels[CK_MAX_LEVELS], const void* mask, void* dst) override
     {
-        const void* l0 = levels[0];
-        const void* l1 = levels[1];
-        const void* l2 = levels[2];
-        const void* l3 = levels[3];
+        struct {
+            const void* v[CK_MAX_LEVELS];
+        } lv;  // blocks capture structs, not arrays
+        for (int i = 0; i < CK_MAX_LEVELS; ++i) lv.v[i] = levels[i];
         dispatch(pipelines_.gather, p.dstWidth, p.dstHeight, ^(id<MTLComputeCommandEncoder> enc) {
           [enc setBytes:&p length:sizeof(p) atIndex:0];
-          [enc setBuffer:B(l0) offset:0 atIndex:1];
-          [enc setBuffer:B(l1) offset:0 atIndex:2];
-          [enc setBuffer:B(l2) offset:0 atIndex:3];
-          [enc setBuffer:B(l3) offset:0 atIndex:4];
-          [enc setBuffer:B(mask) offset:0 atIndex:5];
-          [enc setBuffer:B(dst) offset:0 atIndex:6];
+          for (int i = 0; i < CK_MAX_LEVELS; ++i) [enc setBuffer:B(lv.v[i]) offset:0 atIndex:1 + i];
+          [enc setBuffer:B(mask) offset:0 atIndex:1 + CK_MAX_LEVELS];
+          [enc setBuffer:B(dst) offset:0 atIndex:2 + CK_MAX_LEVELS];
         });
     }
 
-    void submit() override { [cmd_ commit]; }
+    ~MetalBackend() override { endEncoding(); }
+
+    void submit() override
+    {
+        endEncoding();
+        [cmd_ commit];
+    }
 
     void finish() override
     {
@@ -183,20 +197,28 @@ private:
     void dispatch(id<MTLComputePipelineState> state, int w, int h, void (^bind)(id<MTLComputeCommandEncoder>))
     {
         if (w <= 0 || h <= 0) return;
-        id<MTLComputeCommandEncoder> enc = [cmd_ computeCommandEncoder];
-        [enc setComputePipelineState:state];
-        bind(enc);
+        // One serial encoder for the whole frame: each dispatch sees the results of the previous one.
+        if (!enc_) enc_ = [cmd_ computeCommandEncoder];
+        [enc_ setComputePipelineState:state];
+        bind(enc_);
         const NSUInteger tw = 16;
         const NSUInteger th = MAX((NSUInteger)1, MIN((NSUInteger)16, state.maxTotalThreadsPerThreadgroup / tw));
-        [enc dispatchThreadgroups:MTLSizeMake((w + tw - 1) / tw, (h + th - 1) / th, 1)
-            threadsPerThreadgroup:MTLSizeMake(tw, th, 1)];
-        [enc endEncoding];
+        [enc_ dispatchThreadgroups:MTLSizeMake((w + tw - 1) / tw, (h + th - 1) / th, 1)
+             threadsPerThreadgroup:MTLSizeMake(tw, th, 1)];
+    }
+
+    void endEncoding()
+    {
+        if (!enc_) return;
+        [enc_ endEncoding];
+        enc_ = nil;
     }
 
     id<MTLCommandQueue> queue_;
     id<MTLDevice> device_;
     Pipelines pipelines_;
     id<MTLCommandBuffer> cmd_;
+    id<MTLComputeCommandEncoder> enc_ = nil;
 };
 
 }  // namespace

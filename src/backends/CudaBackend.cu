@@ -33,6 +33,13 @@ __global__ void k_blur(CKBlurParams b, const float* src, float* dst)
     if (x < b.width && y < b.height) ck_blur(x, y, b, src, dst);
 }
 
+__global__ void k_downsample(CKBlurParams b, const float* src, float* dst)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < b.width && y < b.height) ck_downsample(x, y, b, src, dst);
+}
+
 __global__ void k_contrast(CKParams p, const float* luma, const float* lumaBlur, float* mask)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -41,11 +48,12 @@ __global__ void k_contrast(CKParams p, const float* luma, const float* lumaBlur,
 }
 
 __global__ void k_gather(CKParams p, const float* L0, const float* L1, const float* L2, const float* L3,
-                         const float* mask, float* dst)
+                         const float* L4, const float* L5, const float* L6, const float* L7, const float* mask,
+                         float* dst)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.dstWidth && y < p.dstHeight) ck_gather(x, y, &p, L0, L1, L2, L3, mask, dst);
+    if (x < p.dstWidth && y < p.dstHeight) ck_gather(x, y, &p, L0, L1, L2, L3, L4, L5, L6, L7, mask, dst);
 }
 
 void check(cudaError_t err, const char* what)
@@ -90,6 +98,12 @@ public:
         check(cudaGetLastError(), "k_blur");
     }
 
+    void downsample(const CKBlurParams& b, const void* src, void* dst) override
+    {
+        k_downsample<<<grid(b.width, b.height), block(), 0, stream_>>>(b, F(src), F(dst));
+        check(cudaGetLastError(), "k_downsample");
+    }
+
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
         k_contrast<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p, F(luma), F(lumaBlur), F(mask));
@@ -99,7 +113,8 @@ public:
     void gather(const CKParams& p, const void* const levels[CK_MAX_LEVELS], const void* mask, void* dst) override
     {
         k_gather<<<grid(p.dstWidth, p.dstHeight), block(), 0, stream_>>>(
-            p, F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(mask), F(dst));
+            p, F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(levels[4]), F(levels[5]), F(levels[6]),
+            F(levels[7]), F(mask), F(dst));
         check(cudaGetLastError(), "k_gather");
     }
 

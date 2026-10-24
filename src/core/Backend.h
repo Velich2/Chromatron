@@ -26,6 +26,7 @@ public:
     virtual void import(const CKParams& p, const void* src, void* work) = 0;
     virtual void luma(const CKParams& p, const void* work, void* luma) = 0;
     virtual void blur(const CKBlurParams& b, const void* src, void* dst) = 0;
+    virtual void downsample(const CKBlurParams& b, const void* src, void* dst) = 0;
     virtual void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) = 0;
     virtual void gather(const CKParams& p, const void* const levels[CK_MAX_LEVELS], const void* mask,
                         void* dst) = 0;

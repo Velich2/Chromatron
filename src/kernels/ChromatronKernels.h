@@ -21,7 +21,7 @@
 #endif
 
 #define CK_MAX_TAPS 32
-#define CK_MAX_LEVELS 4
+#define CK_MAX_LEVELS 8
 
 #define CK_MODE_SEPARATION 0
 #define CK_MODE_ABERRATION 1
@@ -36,6 +36,12 @@
 #define CK_TRANSFER_DAVINCI_INTERMEDIATE 5
 #define CK_TRANSFER_REC709_SCENE 6  // BT.709 camera OETF (precise BT.2020 constants)
 
+// How a host buffer stores one channel value.
+#define CK_HOST_FLOAT 0
+#define CK_HOST_HALF 1  // IEEE 754 half floats (Premiere GPU 16f frames)
+#define CK_HOST_U8 2    // 0..255
+#define CK_HOST_AE16 3  // 0..32768 (After Effects 16 bpc)
+
 // Channel order of an external (host) buffer.
 #define CK_ORDER_RGBA 0
 #define CK_ORDER_BGRA 1
@@ -46,7 +52,7 @@
 typedef struct CKParams {
     int srcWidth;     // working buffer (= source image) size
     int srcHeight;
-    int srcPitch;     // source row stride, in channel values (floats, or halves when hostHalf)
+    int srcPitch;     // source row stride, in channel values (see hostFormat)
     int srcOrder;     // CK_ORDER_*
     int dstWidth;     // region written by the gather pass
     int dstHeight;
@@ -58,14 +64,14 @@ typedef struct CKParams {
     int dstOffsetY;
     int mode;         // CK_MODE_*
     int numTaps;
-    int numLevels;    // 1..CK_MAX_LEVELS blurred copies of the source
+    int numLevels;    // 1..CK_MAX_LEVELS: the source and its blurred copies
     int useMask;
     int showMask;
     int cleanFringe;  // remove the magenta/green component from the dispersion
     int transfer;     // CK_TRANSFER_* of the host image
     int useMatrix;    // host primaries differ from the working primaries
     int premultiplied; // host RGB is associated with alpha: (de|en)code the colour, not RGB*alpha
-    int hostHalf;     // host buffers hold IEEE 754 half floats (Premiere GPU 16f frames)
+    int hostFormat;   // CK_HOST_*: how the host buffers store a channel value
     int keepLuma;     // Fringe Blur: blurred taps, luminance of the unblurred ones
     float lumR;       // luminance weights of the working primaries
     float lumG;
@@ -93,8 +99,12 @@ typedef struct CKParams {
     float toWork[9];     // host -> working primaries (row-major), when useMatrix
     float fromWork[9];    // working -> host primaries
     float tapT[CK_MAX_TAPS];      // displacement factor of each spectral tap
-    float tapLevel[CK_MAX_TAPS];  // blur level coordinate (0 .. numLevels-1), at the frame corner in the lens modes
-    float tapLevelAxial[CK_MAX_TAPS];  // blur level coordinate over the whole frame (physical axial colour)
+    float levelInvSigma1; // 1 / blur of level 1 (px); every further level doubles the blur
+    int levelW[CK_MAX_LEVELS];        // size of each level: levels blurred by 1.5 px or more are downsampled
+    int levelH[CK_MAX_LEVELS];
+    float levelScale[CK_MAX_LEVELS];  // level pixels per source pixel (1, 1/2, 1/4 ...)
+    float tapSigma[CK_MAX_TAPS];      // blur of each tap, px, at the frame corner in the lens modes
+    float tapSigmaAxial[CK_MAX_TAPS]; // blur over the whole frame, px (physical axial colour)
     float tapW[CK_MAX_TAPS * 3];  // RGB weight of each tap; every channel sums to 1
 } CKParams;
 
@@ -106,6 +116,8 @@ typedef struct CKBlurParams {
     int radius;       // 0 = plain copy
     int dilate;       // 1 = max filter over the radius instead of a Gaussian
     float sigma;
+    int srcWidth;     // downsample: size of the finer source level
+    int srcHeight;
 } CKBlurParams;
 
 typedef struct CKPix {
@@ -119,7 +131,12 @@ typedef struct CKPix {
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#define CK_FN static inline
+// Forced: the gather is large, and compilers stop inlining the per-tap helpers into it.
+#if defined(_MSC_VER)
+#define CK_FN static __forceinline
+#else
+#define CK_FN static inline __attribute__((always_inline))
+#endif
 #define CK_G
 #define CK_PARAMS const CKParams*
 #define CK_BPARAMS const CKBlurParams&
@@ -168,8 +185,24 @@ static inline uint16_t ck_float_to_half(float f)
     if (rem > 0x1000u || (rem == 0x1000u && (h & 1u))) ++h;
     return (uint16_t)(sign | h);
 }
+// log2 for the blur level lookup, once per tap and pixel: exponent bits plus a quartic on the
+// mantissa (error below 3e-4 of a level); std::log2 makes the CPU gather noticeably slower.
+static inline float ck_log2_level(float x)
+{
+    uint32_t i;
+    std::memcpy(&i, &x, sizeof(i));
+    const float e = (float)((int)((i >> 23) & 0xffu) - 127);
+    i = (i & 0x007fffffu) | 0x3f800000u;
+    float m;
+    std::memcpy(&m, &i, sizeof(m));
+    return e + (((-0.0791503658f * m + 0.628815729f) * m - 2.0810602f) * m + 4.02837277f) * m - 2.49677377f;
+}
 #define ck_load_half(ptr, i) ck_half_to_float(((const uint16_t*)(ptr))[i])
 #define ck_store_half(ptr, i, v) (((uint16_t*)(ptr))[i] = ck_float_to_half(v))
+#define ck_load_u8(ptr, i) (((const uint8_t*)(ptr))[i])
+#define ck_store_u8(ptr, i, v) (((uint8_t*)(ptr))[i] = (uint8_t)(v))
+#define ck_load_u16(ptr, i) (((const uint16_t*)(ptr))[i])
+#define ck_store_u16(ptr, i, v) (((uint16_t*)(ptr))[i] = (uint16_t)(v))
 #elif defined(CK_CUDA)
 #include <cuda_fp16.h>
 #define CK_FN static __device__ __forceinline__
@@ -185,8 +218,13 @@ static inline uint16_t ck_float_to_half(float f)
 #define ck_exp2f(x) exp2f(x)
 #define ck_fminf(a, b) fminf(a, b)
 #define ck_fmaxf(a, b) fmaxf(a, b)
+#define ck_log2_level(x) log2f(x)
 #define ck_load_half(ptr, i) __half2float(((const __half*)(ptr))[i])
 #define ck_store_half(ptr, i, v) (((__half*)(ptr))[i] = __float2half_rn(v))
+#define ck_load_u8(ptr, i) (((const unsigned char*)(ptr))[i])
+#define ck_store_u8(ptr, i, v) (((unsigned char*)(ptr))[i] = (unsigned char)(v))
+#define ck_load_u16(ptr, i) (((const unsigned short*)(ptr))[i])
+#define ck_store_u16(ptr, i, v) (((unsigned short*)(ptr))[i] = (unsigned short)(v))
 #elif defined(CK_OPENCL)
 #define CK_FN static inline
 #define CK_G __global
@@ -201,9 +239,14 @@ static inline uint16_t ck_float_to_half(float f)
 #define ck_exp2f(x) exp2(x)
 #define ck_fminf(a, b) fmin(a, b)
 #define ck_fmaxf(a, b) fmax(a, b)
+#define ck_log2_level(x) log2(x)
 // vload_half / vstore_half are core OpenCL: no cl_khr_fp16 needed.
 #define ck_load_half(ptr, i) vload_half(i, (__global const half*)(ptr))
 #define ck_store_half(ptr, i, v) vstore_half_rte(v, i, (__global half*)(ptr))
+#define ck_load_u8(ptr, i) (((__global const uchar*)(ptr))[i])
+#define ck_store_u8(ptr, i, v) (((__global uchar*)(ptr))[i] = (uchar)(v))
+#define ck_load_u16(ptr, i) (((__global const ushort*)(ptr))[i])
+#define ck_store_u16(ptr, i, v) (((__global ushort*)(ptr))[i] = (ushort)(v))
 #elif defined(CK_METAL)
 #define CK_FN static inline
 #define CK_G device
@@ -218,19 +261,29 @@ static inline uint16_t ck_float_to_half(float f)
 #define ck_exp2f(x) exp2(x)
 #define ck_fminf(a, b) fmin(a, b)
 #define ck_fmaxf(a, b) fmax(a, b)
+#define ck_log2_level(x) log2(x)
 #define ck_load_half(ptr, i) float(reinterpret_cast<device const half*>(ptr)[i])
 #define ck_store_half(ptr, i, v) (reinterpret_cast<device half*>(ptr)[i] = half(v))
+#define ck_load_u8(ptr, i) (reinterpret_cast<device const uchar*>(ptr)[i])
+#define ck_store_u8(ptr, i, v) (reinterpret_cast<device uchar*>(ptr)[i] = uchar(v))
+#define ck_load_u16(ptr, i) (reinterpret_cast<device const ushort*>(ptr)[i])
+#define ck_store_u16(ptr, i, v) (reinterpret_cast<device ushort*>(ptr)[i] = ushort(v))
 #endif
 
-// Channel value i of a host buffer, stored as float or half (CKParams.hostHalf).
+// Channel value i of a host buffer in its storage format (CKParams.hostFormat), as 0..1 floats.
 CK_FN float ck_ld(CK_PARAMS p, CK_G const float* img, int i)
 {
-    return p->hostHalf ? ck_load_half(img, i) : img[i];
+    if (p->hostFormat == CK_HOST_HALF) return ck_load_half(img, i);
+    if (p->hostFormat == CK_HOST_U8) return (float)ck_load_u8(img, i) * (1.0f / 255.0f);
+    if (p->hostFormat == CK_HOST_AE16) return (float)ck_load_u16(img, i) * (1.0f / 32768.0f);
+    return img[i];
 }
 
 CK_FN void ck_st(CK_PARAMS p, CK_G float* img, int i, float v)
 {
-    if (p->hostHalf) ck_store_half(img, i, v);
+    if (p->hostFormat == CK_HOST_HALF) ck_store_half(img, i, v);
+    else if (p->hostFormat == CK_HOST_U8) ck_store_u8(img, i, (int)(ck_fminf(ck_fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f));
+    else if (p->hostFormat == CK_HOST_AE16) ck_store_u16(img, i, (int)(ck_fminf(ck_fmaxf(v, 0.0f), 1.0f) * 32768.0f + 0.5f));
     else img[i] = v;
 }
 
@@ -517,10 +570,55 @@ CK_FN void ck_contrast(int x, int y, CK_PARAMS p, CK_G const float* luma, CK_G c
     mask[i] = ck_smooth(p->maskLow, p->maskHigh, e);
 }
 
-CK_FN CK_G const float* ck_level(int l, CK_G const float* L0, CK_G const float* L1, CK_G const float* L2,
-                                 CK_G const float* L3)
+// ---------------------------------------------------------------------------
+// Blur pyramid. Level k >= 1 holds the source blurred by 2^(k-1) / levelInvSigma1; levels
+// blurred by 1.5 px or more are stored at a lower resolution, centres aligned with the source
+// (coarse pixel c of a halving sits at fine 2c + 0.5).
+// ---------------------------------------------------------------------------
+CK_FN void ck_downsample(int x, int y, CK_BPARAMS b, CK_G const float* src, CK_G float* dst)
 {
-    return l <= 0 ? L0 : (l == 1 ? L1 : (l == 2 ? L2 : L3));
+    float r = 0.0f, g = 0.0f, bl = 0.0f, a = 0.0f;
+    for (int j = 0; j < 4; ++j) {  // [1 3 3 1] / 8 in each direction
+        const int sy = ck_clampi(2 * y - 1 + j, 0, b.srcHeight - 1);
+        const float wy = (j == 0 || j == 3) ? 0.125f : 0.375f;
+        for (int i = 0; i < 4; ++i) {
+            const int sx = ck_clampi(2 * x - 1 + i, 0, b.srcWidth - 1);
+            const float w = wy * ((i == 0 || i == 3) ? 0.125f : 0.375f);
+            const int o = (sy * b.srcWidth + sx) * 4;
+            r += w * src[o];
+            g += w * src[o + 1];
+            bl += w * src[o + 2];
+            a += w * src[o + 3];
+        }
+    }
+    const int d = (y * b.width + x) * 4;
+    dst[d] = r;
+    dst[d + 1] = g;
+    dst[d + 2] = bl;
+    dst[d + 3] = a;
+}
+
+CK_FN CK_G const float* ck_level(int l, CK_G const float* L0, CK_G const float* L1, CK_G const float* L2,
+                                 CK_G const float* L3, CK_G const float* L4, CK_G const float* L5,
+                                 CK_G const float* L6, CK_G const float* L7)
+{
+    return l <= 0 ? L0 : l == 1 ? L1 : l == 2 ? L2 : l == 3 ? L3 : l == 4 ? L4 : l == 5 ? L5 : l == 6 ? L6 : L7;
+}
+
+// Bilinear sample of level l at working-buffer coordinates.
+CK_FN CKPix ck_sample(CK_PARAMS p, CK_G const float* level, int l, float sx, float sy)
+{
+    const float k = p->levelScale[l];
+    return ck_bilinear(level, p->levelW[l], p->levelH[l], (sx + 0.5f) * k - 0.5f, (sy + 0.5f) * k - 0.5f);
+}
+
+// Level coordinate of a blur: linear up to level 1, then one level per doubling, so a blur
+// between two levels mixes Gaussians at most a factor of 2 apart.
+CK_FN float ck_level_of(CK_PARAMS p, float sigma)
+{
+    const float x = sigma * p->levelInvSigma1;  // 0 with a single level
+    if (x <= 1.0f) return ck_fmaxf(x, 0.0f);
+    return ck_fminf(1.0f + ck_log2_level(x), (float)(p->numLevels - 1));
 }
 
 // Writes a pixel as is (used for the mask view).
@@ -585,7 +683,8 @@ CK_FN void ck_mask_view(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix orig, 
 // sum to one, so an undisplaced, unblurred image passes through unchanged.
 // ---------------------------------------------------------------------------
 CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const float* L1,
-                     CK_G const float* L2, CK_G const float* L3, CK_G const float* mask, CK_G float* dst)
+                     CK_G const float* L2, CK_G const float* L3, CK_G const float* L4, CK_G const float* L5,
+                     CK_G const float* L6, CK_G const float* L7, CK_G const float* mask, CK_G float* dst)
 {
     const int wx = x + p->dstOffsetX;
     const int wy = y + p->dstOffsetY;
@@ -616,11 +715,23 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         else ck_store(p, dst, x, y, orig);
         return;
     }
+#if defined(CK_CPU)
+    const float* const levels[CK_MAX_LEVELS] = {L0, L1, L2, L3, L4, L5, L6, L7};  // a load, not a branch chain
+#define CK_LEVEL(l) levels[l]
+#else
+#define CK_LEVEL(l) ck_level(l, L0, L1, L2, L3, L4, L5, L6, L7)
+#endif
+    // Fringe Blur: every blur level sampled at this very pixel (the undisplaced picture).
+    CKPix here[CK_MAX_LEVELS];
+    if (p->keepLuma)
+        for (int l = 0; l < p->numLevels; ++l) here[l] = ck_sample(p, CK_LEVEL(l), l, fx, fy);
     float r = 0.0f, g = 0.0f, b = 0.0f;
     float ar = 0.0f, ag = 0.0f, ab = 0.0f;
     float mr = 0.0f, mg = 0.0f, mb = 0.0f;  // achromatic version of the same taps
     float yr = 0.0f, yg = 0.0f, yb = 0.0f;  // Fringe Blur: the same taps unblurred
     float yar = 0.0f, yag = 0.0f, yab = 0.0f;
+    float hr = 0.0f, hg = 0.0f, hb = 0.0f;  // Fringe Blur: the same blurs, undisplaced
+    float hmr = 0.0f, hmg = 0.0f, hmb = 0.0f;
     for (int i = 0; i < p->numTaps; ++i) {
         const float t = p->tapT[i];
         float sx, sy;
@@ -635,13 +746,15 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
             sy = fy - dy * k * p->anaY;
         }
         // Field-dependent defocus (lens modes) and axial colour (same over the frame) add in quadrature.
-        const float lf2 = p->tapLevel[i] * field;
-        const float lev = p->tapLevelAxial[i] > 0.0f ? ck_sqrtf(lf2 * lf2 + p->tapLevelAxial[i] * p->tapLevelAxial[i]) : lf2;
+        const float sf = p->tapSigma[i] * field;
+        const float sa = p->tapSigmaAxial[i];
+        const float lev = ck_level_of(p, sa > 0.0f ? ck_sqrtf(sf * sf + sa * sa) : sf);
         const int l0 = (int)ck_floorf(lev);
         const float lf = lev - (float)l0;
-        CKPix v = ck_bilinear(ck_level(l0, L0, L1, L2, L3), p->srcWidth, p->srcHeight, sx, sy);
-        if (lf > 0.001f && l0 + 1 < p->numLevels) {
-            const CKPix u = ck_bilinear(ck_level(l0 + 1, L0, L1, L2, L3), p->srcWidth, p->srcHeight, sx, sy);
+        const bool next = lf > 0.001f && l0 + 1 < p->numLevels;
+        CKPix v = ck_sample(p, CK_LEVEL(l0), l0, sx, sy);
+        if (next) {
+            const CKPix u = ck_sample(p, CK_LEVEL(l0 + 1), l0 + 1, sx, sy);
             v.r += (u.r - v.r) * lf;
             v.g += (u.g - v.g) * lf;
             v.b += (u.b - v.b) * lf;
@@ -661,55 +774,87 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         mg += wy * v.g;
         mb += wy * v.b;
         if (p->keepLuma) {
-            const CKPix u = ck_bilinear(L0, p->srcWidth, p->srcHeight, sx, sy);
+            const CKPix u = l0 == 0 && !next ? v : ck_bilinear(L0, p->srcWidth, p->srcHeight, sx, sy);
             yr += wr * u.r;
             yg += wg * u.g;
             yb += wb * u.b;
             yar += wr * u.a;
             yag += wg * u.a;
             yab += wb * u.a;
+            CKPix h = here[l0];
+            if (next) {
+                const CKPix h1 = here[l0 + 1];
+                h.r += (h1.r - h.r) * lf;
+                h.g += (h1.g - h.g) * lf;
+                h.b += (h1.b - h.b) * lf;
+            }
+            hr += wr * h.r;
+            hg += wg * h.g;
+            hb += wb * h.b;
+            hmr += wy * h.r;
+            hmg += wy * h.g;
+            hmb += wy * h.b;
         }
+    }
+    // The colour the dispersion adds (the taps against their achromatic version), and the
+    // achromatic base it is added to.
+    float xr = r - mr, xg = g - mg, xb = b - mb;
+    float br = mr, bg = mg, bb = mb;
+    if (p->keepLuma) {
+        // Fringe Blur blurred the taps. The same blur of the undisplaced picture is taken away, so
+        // only the fringe itself softens, on top of the sharp original: without displacement
+        // nothing changes, and coloured areas keep their edges.
+        xr -= hr - hmr;
+        xg -= hg - hmg;
+        xb -= hb - hmb;
+        br = orig.r + mr - hmr;
+        bg = orig.g + mg - hmg;
+        bb = orig.b + mb - hmb;
     }
     if (p->cleanFringe) {
-        // The dispersion's own colour is (rgb - mono). Keep its luminance and its
-        // warm/cool part; drop the magenta/green part (thin lines would otherwise lose
-        // or keep only the middle of the spectrum and turn pink or green).
-        const float c = (r - mr) * p->fringeDualX + (g - mg) * p->fringeDualY + (b - mb) * p->fringeDualZ;
-        r -= c * p->fringeAxisX;
-        g -= c * p->fringeAxisY;
-        b -= c * p->fringeAxisZ;
+        // Keep the luminance and the warm/cool part of the dispersion's colour; drop the
+        // magenta/green part (thin lines would otherwise lose or keep only the middle of the
+        // spectrum and turn pink or green).
+        const float c = xr * p->fringeDualX + xg * p->fringeDualY + xb * p->fringeDualZ;
+        xr -= c * p->fringeAxisX;
+        xg -= c * p->fringeAxisY;
+        xb -= c * p->fringeAxisZ;
     }
     if (p->saturation != 1.0f) {
-        // Fringe Saturation scales the colour the dispersion adds (rgb - mono). Above 1 the gain
-        // stops where a channel would cross zero, so vivid fringes never turn into dark specks.
+        // Fringe Saturation scales that colour. Above 1 the gain stops where a channel would cross
+        // zero, so vivid fringes never turn into dark specks.
         float k = p->saturation;
-        if (k > 1.0f) {
-            const float limit = ck_fminf(ck_gain_limit(mr, r - mr), ck_fminf(ck_gain_limit(mg, g - mg), ck_gain_limit(mb, b - mb)));
+        if (k > 1.0f && !p->keepLuma) {  // with Fringe Blur the final step keeps the colour in gamut
+            const float limit = ck_fminf(ck_gain_limit(br, xr), ck_fminf(ck_gain_limit(bg, xg), ck_gain_limit(bb, xb)));
             k = ck_fminf(k, ck_fmaxf(1.0f, limit));
         }
-        r = mr + (r - mr) * k;
-        g = mg + (g - mg) * k;
-        b = mb + (b - mb) * k;
+        xr *= k;
+        xg *= k;
+        xb *= k;
     }
+    r = br + xr;
+    g = bg + xg;
+    b = bb + xb;
     if (p->keepLuma) {
-        // Only the colour of the fringes softens: the blurred chromaticity at the sharp
-        // luminance (linear light), coverage from the sharp taps.
+        // Luminance of the sharp taps (linear light) with the colour above. Where that luminance is
+        // too low to carry the colour (a fringe that takes light away blurs into a dark area), the
+        // colour is toned down towards grey instead of turning a channel negative. Coverage comes
+        // from the sharp taps.
         const float ys = p->lumR * yr + p->lumG * yg + p->lumB * yb;
-        const float yb2 = p->lumR * r + p->lumG * g + p->lumB * b;
-        if (yb2 > 1e-6f && ys > 0.0f) {
-            const float k = ys / yb2;
-            r *= k;
-            g *= k;
-            b *= k;
-        } else {
-            r = yr;
-            g = yg;
-            b = yb;
-        }
+        const float yc = p->lumR * r + p->lumG * g + p->lumB * b;
+        const float cr = r - yc, cg = g - yc, cb = b - yc;  // chroma: no luminance of its own
+        float k = ys > 0.0f ? 1.0f : 0.0f;
+        if (cr < 0.0f) k = ck_fminf(k, ck_fmaxf(ys, 0.0f) / -cr);
+        if (cg < 0.0f) k = ck_fminf(k, ck_fmaxf(ys, 0.0f) / -cg);
+        if (cb < 0.0f) k = ck_fminf(k, ck_fmaxf(ys, 0.0f) / -cb);
+        r = ys + cr * k;
+        g = ys + cg * k;
+        b = ys + cb * k;
         ar = yar;
         ag = yag;
         ab = yab;
     }
+#undef CK_LEVEL
     // Coverage of the widest channel keeps premultiplied colour <= alpha.
     const float a = ck_fmaxf(ar, ck_fmaxf(ag, ab));
 

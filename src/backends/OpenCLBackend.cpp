@@ -63,7 +63,7 @@ public:
         check(clGetCommandQueueInfo(queue, CL_QUEUE_CONTEXT, sizeof(ctx_), &ctx_, nullptr), "CL_QUEUE_CONTEXT");
         check(clGetCommandQueueInfo(queue, CL_QUEUE_DEVICE, sizeof(device_), &device_, nullptr), "CL_QUEUE_DEVICE");
         cl_program program = programFor(ctx_, device_);
-        const char* names[kCount] = {"k_import", "k_luma", "k_blur", "k_contrast", "k_gather"};
+        const char* names[kCount] = {"k_import", "k_luma", "k_blur", "k_downsample", "k_contrast", "k_gather"};
         for (int i = 0; i < kCount; ++i) {
             cl_int err = CL_SUCCESS;
             kernels_[i] = clCreateKernel(program, names[i], &err);
@@ -118,6 +118,15 @@ public:
         run(k, b.width, b.height);
     }
 
+    void downsample(const CKBlurParams& b, const void* src, void* dst) override
+    {
+        cl_kernel k = kernels_[kDownsample];
+        setArg(k, 0, sizeof(b), &b);
+        setMem(k, 1, src);
+        setMem(k, 2, dst);
+        run(k, b.width, b.height);
+    }
+
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
         cl_kernel k = kernels_[kContrast];
@@ -133,8 +142,8 @@ public:
         cl_kernel k = kernels_[kGather];
         setMem(k, 0, params(p));
         for (int i = 0; i < CK_MAX_LEVELS; ++i) setMem(k, 1 + i, levels[i]);
-        setMem(k, 5, mask);
-        setMem(k, 6, dst);
+        setMem(k, 1 + CK_MAX_LEVELS, mask);
+        setMem(k, 2 + CK_MAX_LEVELS, dst);
         run(k, p.dstWidth, p.dstHeight);
     }
 
@@ -156,7 +165,7 @@ public:
     }
 
 private:
-    enum { kImport, kLuma, kBlur, kContrast, kGather, kCount };
+    enum { kImport, kLuma, kBlur, kDownsample, kContrast, kGather, kCount };
 
     // The parameter block lives in a small constant buffer: as a by-value argument it would exceed
     // the 1024 bytes OpenCL guarantees for all arguments of a kernel. The passes of a frame share
