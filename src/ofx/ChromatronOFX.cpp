@@ -19,7 +19,7 @@
     "and axial colour."
 #define kPluginIdentifier "com.chromatron.Chromatron"
 #define kPluginVersionMajor 1
-#define kPluginVersionMinor 0
+#define kPluginVersionMinor 1
 
 namespace {
 
@@ -289,7 +289,13 @@ void ChromatronPlugin::render(const RenderArguments& args)
         std::unique_ptr<cx::Backend> backend = backendFor(args);
         const cx::Plan plan = cx::buildPlan(settingsAt(args.time), g);
         const bool gpuImages = args.isEnabledCudaRender || args.isEnabledOpenCLRender || args.isEnabledMetalRender;
-        if (gpuImages && !useGpu_->getValue()) {
+#if CHROMATRON_HAS_CUDA
+        // A GPU this build has no CUDA code for (CUDA 13 starts at Turing) renders on the CPU.
+        const bool cudaMissing = args.isEnabledCudaRender && !cx::cudaUsable();
+#else
+        const bool cudaMissing = false;
+#endif
+        if (gpuImages && (!useGpu_->getValue() || cudaMissing)) {
             // The host decides where images live; "Use GPU" off copies them through host memory.
             const size_t srcBytes = (size_t)src->getRowBytes() * (size_t)(sb.y2 - sb.y1);
             const size_t dstBytes = (size_t)dst->getRowBytes() * (size_t)(db.y2 - db.y1);

@@ -28,8 +28,8 @@ using namespace chromatron::ae;
 
 namespace {
 
-// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 0, 0, PF_Stage_RELEASE, 1) = 525825.
-constexpr int kMajor = 1, kMinor = 0, kBug = 0, kBuild = 1;
+// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 1, 0, PF_Stage_RELEASE, 1) = 558593.
+constexpr int kMajor = 1, kMinor = 1, kBug = 0, kBuild = 1;
 
 // Stable disk IDs: never renumber, only append.
 enum {
@@ -130,7 +130,7 @@ void setMessage(PF_OutData* out, const char* text)
 PF_Err About(PF_InData*, PF_OutData* out)
 {
     std::snprintf(out->return_msg, sizeof(out->return_msg),
-                  "Chromatron %d.%d\rOptical chromatic aberration: RGB separation and lens lateral colour.", kMajor,
+                  "Chromatron %d.%d\rOptical chromatic aberration: RGB separation, lens aberration and a physical lens.", kMajor,
                   kMinor);
     return PF_Err_NONE;
 }
@@ -649,6 +649,9 @@ PF_Err GPUDeviceSetup(PF_InData* in_data, PF_OutData* out_data, PF_GPUDeviceSetu
     const PF_GPU_Framework fw = extra->input->what_gpu;
     // Leaving out_flags2 unset tells AE to render this device on the CPU.
     if (!gpuFrameworkBuilt(fw)) return PF_Err_NONE;
+#if CHROMATRON_HAS_CUDA
+    if (fw == PF_GPU_Framework_CUDA && !cx::cudaUsable()) return PF_Err_NONE;  // GPU or driver too old
+#endif
     try {
         if (fw == PF_GPU_Framework_OPENCL || fw == PF_GPU_Framework_METAL) {
             // Build the runtime-compiled kernels now, so the first frame doesn't pay for it

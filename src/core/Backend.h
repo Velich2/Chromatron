@@ -47,6 +47,11 @@ std::unique_ptr<Backend> makeCpuBackend();
 #if CHROMATRON_HAS_CUDA
 // stream: cudaStream_t, may be null (default stream).
 std::unique_ptr<Backend> makeCudaBackend(void* stream);
+
+// True when the kernels can run on the current CUDA device: false when the driver is older than
+// the toolkit or this build has no code for the GPU (CUDA 13 builds start at Turing). Hosts then
+// render on the CPU instead of failing every frame.
+bool cudaUsable();
 #endif
 
 #if CHROMATRON_HAS_OPENCL
