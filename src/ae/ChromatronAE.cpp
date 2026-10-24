@@ -1,6 +1,7 @@
 // Chromatron - After Effects plug-in (SmartFX, 8/16/32 bpc, GPU via CUDA / OpenCL / Metal).
+// Premiere Pro loads the same plug-in but calls PF_Cmd_RENDER with BGRA frames, rendered on the CPU.
 
-#include "core/Chromatron.h"
+#include "ChromatronParams.h"
 
 #include "AEConfig.h"
 #include "entry.h"
@@ -12,6 +13,7 @@
 #include "AE_EffectPixelFormat.h"
 #include "AE_Macros.h"
 #include "Param_Utils.h"
+#include "PrSDKAESupport.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,38 +24,12 @@
 #include <vector>
 
 namespace cx = chromatron;
+using namespace chromatron::ae;
 
 namespace {
 
 // Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 0, 0, PF_Stage_DEVELOP, 1) = 524289.
 constexpr int kMajor = 1, kMinor = 0, kBug = 0, kBuild = 1;
-
-enum {
-    P_INPUT = 0,
-    P_MODE,
-    P_SEP_START,
-    P_PAIR,
-    P_ANGLE,
-    P_DISTANCE,
-    P_SPREAD,
-    P_SEP_END,
-    P_ABR_START,
-    P_LATERAL,
-    P_BALANCE,
-    P_CENTER,
-    P_THRESHOLD,
-    P_SOFTNESS,
-    P_SHOW_MASK,
-    P_ABR_END,
-    P_OPTICS_START,
-    P_BLUR,
-    P_SAMPLES,
-    P_MIX,
-    P_OPTICS_END,
-    P_USE_GPU,
-    P_SPACE,
-    P_NUM_PARAMS
-};
 
 // Stable disk IDs: never renumber, only append.
 enum {
@@ -106,6 +82,8 @@ private:
     const T* suite_ = nullptr;
 };
 
+constexpr A_long kPremiere = 'PrMr';  // in_data->appl_id
+
 double downsampleX(const PF_InData* in) { return (double)in->downsample_x.num / (double)std::max<A_long>(1, in->downsample_x.den); }
 double downsampleY(const PF_InData* in) { return (double)in->downsample_y.num / (double)std::max<A_long>(1, in->downsample_y.den); }
 
@@ -146,9 +124,18 @@ PF_Err GlobalSetup(PF_InData* in, PF_OutData* out)
     // Keep in sync with AE_Effect_Global_OutFlags / _2 in the PiPL.
     out->out_flags = PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_SEND_UPDATE_PARAMS_UI;
     out->out_flags2 = PF_OutFlag2_FLOAT_COLOR_AWARE | PF_OutFlag2_SUPPORTS_SMART_RENDER |
-                      PF_OutFlag2_SUPPORTS_THREADED_RENDERING | PF_OutFlag2_SUPPORTS_GPU_RENDER_F32;
-    (void)in;
-    return PF_Err_NONE;
+                      PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
+    if (in->appl_id != kPremiere) {
+        out->out_flags2 |= PF_OutFlag2_SUPPORTS_GPU_RENDER_F32;
+        return PF_Err_NONE;
+    }
+    // Premiere: no SmartFX or AE GPU path, frames come through PF_Cmd_RENDER in these formats.
+    Suite<PF_PixelFormatSuite1> formats(in, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1);
+    if (!formats) return PF_Err_BAD_CALLBACK_PARAM;
+    PF_Err err = formats->ClearSupportedPixelFormats(in->effect_ref);
+    if (!err) err = formats->AddSupportedPixelFormat(in->effect_ref, PrPixelFormat_BGRA_4444_32f);
+    if (!err) err = formats->AddSupportedPixelFormat(in->effect_ref, PrPixelFormat_BGRA_4444_8u);
+    return err;
 }
 
 PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
@@ -232,14 +219,6 @@ PF_Err UpdateParamsUI(PF_InData* in, PF_OutData*, PF_ParamDef* params[])
     return err;
 }
 
-// Reads every parameter at the current time (SmartFX passes no params to render calls).
-struct Inputs {
-    cx::Settings settings;
-    double centerX = 0.0;  // optical centre, full-resolution layer pixels
-    double centerY = 0.0;
-    bool useGpu = true;
-    bool autoSpace = true;  // Color Space = Auto, resolved per render from the world's depth
-};
 
 // Auto: 32 bpc projects are normally linearised (or OCIO scene-linear), 8/16 bpc worlds hold
 // display-encoded pixels. A wrong guess only changes how linear the optics are; the decode and
@@ -251,41 +230,43 @@ cx::Settings ResolveSettings(const Inputs& inputs, bool floatWorld)
     return s;
 }
 
+void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
+{
+    switch (index) {
+    case P_MODE:
+    case P_PAIR:
+    case P_SPACE: SetParam(index, d.u.pd.value, 0, out); break;
+    case P_ANGLE: SetParam(index, FIX_2_FLOAT(d.u.ad.value), 0, out); break;
+    case P_CENTER: SetParam(index, FIX_2_FLOAT(d.u.td.x_value), FIX_2_FLOAT(d.u.td.y_value), out); break;
+    case P_SHOW_MASK:
+    case P_USE_GPU: SetParam(index, d.u.bd.value, 0, out); break;
+    case P_SAMPLES: SetParam(index, d.u.sd.value, 0, out); break;
+    case P_DISTANCE:
+    case P_SPREAD:
+    case P_LATERAL:
+    case P_BALANCE:
+    case P_THRESHOLD:
+    case P_SOFTNESS:
+    case P_BLUR:
+    case P_MIX: SetParam(index, d.u.fs_d.value, 0, out); break;
+    default: break;  // input layer, topic groups
+    }
+}
+
 PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
 {
     PF_Err err = PF_Err_NONE;
-    auto get = [&](int index, auto&& read) {
-        if (err) return;
+    for (int index = P_INPUT + 1; index < P_NUM_PARAMS && !err; ++index) {
+        if (index == P_SEP_START || index == P_SEP_END || index == P_ABR_START || index == P_ABR_END ||
+            index == P_OPTICS_START || index == P_OPTICS_END)
+            continue;
         PF_ParamDef def;
         AEFX_CLR_STRUCT(def);
         err = PF_CHECKOUT_PARAM(in_data, index, in_data->current_time, in_data->time_step, in_data->time_scale, &def);
-        if (!err) read(def);
+        if (!err) ReadParam(index, def, out);
         PF_Err err2 = PF_CHECKIN_PARAM(in_data, &def);
         if (!err) err = err2;
-    };
-    cx::Settings& s = out.settings;
-    get(P_MODE, [&](PF_ParamDef& d) { s.mode = d.u.pd.value == 1 ? cx::Mode::Separation : cx::Mode::Aberration; });
-    get(P_SPACE, [&](PF_ParamDef& d) {
-        out.autoSpace = d.u.pd.value >= 11;
-        s.space = (cx::ColorSpace)std::max(0, std::min(9, (int)d.u.pd.value - 1));
-    });
-    get(P_PAIR, [&](PF_ParamDef& d) { s.pair = (cx::ColorPair)std::max(0, std::min(3, (int)d.u.pd.value - 1)); });
-    get(P_ANGLE, [&](PF_ParamDef& d) { s.angleDeg = FIX_2_FLOAT(d.u.ad.value); });
-    get(P_DISTANCE, [&](PF_ParamDef& d) { s.distance = d.u.fs_d.value; });
-    get(P_SPREAD, [&](PF_ParamDef& d) { s.spread = d.u.fs_d.value; });
-    get(P_LATERAL, [&](PF_ParamDef& d) { s.lateral = d.u.fs_d.value; });
-    get(P_BALANCE, [&](PF_ParamDef& d) { s.balance = d.u.fs_d.value; });
-    get(P_CENTER, [&](PF_ParamDef& d) {
-        out.centerX = FIX_2_FLOAT(d.u.td.x_value);
-        out.centerY = FIX_2_FLOAT(d.u.td.y_value);
-    });
-    get(P_THRESHOLD, [&](PF_ParamDef& d) { s.threshold = d.u.fs_d.value; });
-    get(P_SOFTNESS, [&](PF_ParamDef& d) { s.softness = d.u.fs_d.value; });
-    get(P_SHOW_MASK, [&](PF_ParamDef& d) { s.showMask = d.u.bd.value != 0; });
-    get(P_BLUR, [&](PF_ParamDef& d) { s.channelBlur = d.u.fs_d.value; });
-    get(P_SAMPLES, [&](PF_ParamDef& d) { s.samples = (int)d.u.sd.value; });
-    get(P_MIX, [&](PF_ParamDef& d) { s.mix = d.u.fs_d.value / 100.0; });
-    get(P_USE_GPU, [&](PF_ParamDef& d) { out.useGpu = d.u.bd.value != 0; });
+    }
     return err;
 }
 
@@ -492,6 +473,61 @@ PF_Err SmartRender(PF_InData* in_data, PF_OutData* out_data, PF_SmartRenderExtra
     return err;
 }
 
+// Premiere: params[] holds the values at the current time and the input frame. BGRA_4444_32f is
+// processed in place, BGRA_4444_8u through a float copy; both use straight (unpremultiplied) alpha.
+PF_Err PremiereRender(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output)
+{
+    PF_EffectWorld* src = &params[P_INPUT]->u.ld;
+    PF_EffectWorld* dst = output;
+    if (!src->data || !dst->data || dst->width <= 0 || dst->height <= 0) return PF_Err_NONE;
+    Inputs inputs;
+    for (int index = P_INPUT + 1; index < P_NUM_PARAMS; ++index) ReadParam(index, *params[index], inputs);
+    const cx::Settings settings = PremiereSettings(inputs);
+
+    Suite<PF_PixelFormatSuite1> formats(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1);
+    if (!formats) return PF_Err_BAD_CALLBACK_PARAM;
+    PrPixelFormat format = PrPixelFormat_Invalid;
+    PF_Err err = formats->GetPixelFormat(src, &format);
+    if (err) return err;
+
+    try {
+        std::unique_ptr<cx::Backend> backend = cx::makeCpuBackend();
+        cx::Geometry g = MakeGeometry(in_data, inputs, src, dst);
+        g.premultiplied = false;
+        g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
+        if (format == PrPixelFormat_BGRA_4444_32f) {
+            g.srcPitch = (int)(src->rowbytes / sizeof(float));
+            g.dstPitch = (int)(dst->rowbytes / sizeof(float));
+            cx::render(*backend, cx::buildPlan(settings, g), src->data, dst->data);
+            return PF_Err_NONE;
+        }
+        if (format != PrPixelFormat_BGRA_4444_8u) return PF_Err_UNRECOGNIZED_PARAM_TYPE;
+
+        std::vector<float> in((size_t)src->width * src->height * 4);
+        std::vector<float> out((size_t)dst->width * dst->height * 4);
+        for (A_long y = 0; y < src->height; ++y) {
+            const A_u_char* row = (const A_u_char*)src->data + (ptrdiff_t)y * src->rowbytes;
+            float* d = &in[(size_t)y * src->width * 4];
+            for (A_long i = 0; i < src->width * 4; ++i) d[i] = row[i] / 255.0f;
+        }
+        g.srcPitch = src->width * 4;
+        g.dstPitch = dst->width * 4;
+        cx::render(*backend, cx::buildPlan(settings, g), in.data(), out.data());
+        for (A_long y = 0; y < dst->height; ++y) {
+            A_u_char* row = (A_u_char*)dst->data + (ptrdiff_t)y * dst->rowbytes;
+            const float* s = &out[(size_t)y * dst->width * 4];
+            for (A_long i = 0; i < dst->width * 4; ++i)
+                row[i] = (A_u_char)std::lround(std::min(1.0f, std::max(0.0f, s[i])) * 255.0f);
+        }
+    } catch (const std::bad_alloc&) {
+        return PF_Err_OUT_OF_MEMORY;
+    } catch (const std::exception& e) {
+        setMessage(out_data, e.what());
+        return PF_Err_INTERNAL_STRUCT_DAMAGED;
+    }
+    return PF_Err_NONE;
+}
+
 PF_Err GPUDeviceSetup(PF_InData* in_data, PF_OutData* out_data, PF_GPUDeviceSetupExtra* extra)
 {
     const PF_GPU_Framework fw = extra->input->what_gpu;
@@ -539,7 +575,6 @@ extern "C" DllExport PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr, PF_
 extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[],
                                        PF_LayerDef* output, void* extra)
 {
-    (void)output;
     try {
         switch (cmd) {
         case PF_Cmd_ABOUT:
@@ -550,6 +585,9 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutDat
             return ParamsSetup(in_data, out_data);
         case PF_Cmd_UPDATE_PARAMS_UI:
             return UpdateParamsUI(in_data, out_data, params);
+        case PF_Cmd_RENDER:
+            if (in_data->appl_id != kPremiere) return PF_Err_NONE;  // After Effects always uses SmartFX
+            return PremiereRender(in_data, out_data, params, output);
         case PF_Cmd_SMART_PRE_RENDER:
             return SmartPreRender(in_data, out_data, static_cast<PF_PreRenderExtra*>(extra));
         case PF_Cmd_SMART_RENDER:

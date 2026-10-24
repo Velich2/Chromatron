@@ -359,6 +359,7 @@ Plan buildPlan(const Settings& s, const Geometry& g)
     p.dstOffsetY = g.dstOffsetY;
     p.mix = (float)std::max(0.0, std::min(1.0, s.mix));
     p.premultiplied = g.premultiplied ? 1 : 0;
+    p.hostHalf = g.hostHalf ? 1 : 0;
     setupColorSpace(p, s.space);
     const double lum[3] = {p.lumR, p.lumG, p.lumB};
 
