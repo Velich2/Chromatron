@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (CPU + OpenCL on pocl)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenCL
+        run: sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev opencl-headers pocl-opencl-icd
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCHROMATRON_WITH_CUDA=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -V
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chromatron-OFX-Linux
+          path: build/Chromatron.ofx.bundle
+
+  windows:
+    name: Windows (CPU + CUDA + OpenCL)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CUDA
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.1'
+          method: network
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration", "opencl"]'
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure -V
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chromatron-OFX-Windows
+          path: build/Chromatron.ofx.bundle
+
+  macos:
+    name: macOS (CPU + Metal, universal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -V
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chromatron-OFX-macOS
+          path: build/Chromatron.ofx.bundle

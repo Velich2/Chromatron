@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>Chromatron</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.chromatron.ae.Chromatron</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Chromatron</string>
+    <key>CFBundlePackageType</key>
+    <string>eFKT</string>
+    <key>CFBundleSignature</key>
+    <string>FXTC</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>LSRequiresCarbon</key>
+    <true/>
+</dict>
+</plist>
