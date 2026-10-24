@@ -203,9 +203,10 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_CHECKBOXX("Use GPU", TRUE, 0, ID_USE_GPU);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Space", 10, 3,
+    // Popup values are stored in projects: the fixed encodings keep their positions, Auto is appended.
+    PF_ADD_POPUP("Color Space", 11, 11,
                  "Linear (Rec.709 primaries)|sRGB|Rec.709 Gamma 2.4 (BT.1886)|ACEScg|ACEScct|ACEScc|"
-                 "ACES2065-1 (AP0)|DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)|Rec.709 (Scene)",
+                 "ACES2065-1 (AP0)|DaVinci Wide Gamut / Intermediate|DaVinci Wide Gamut (linear)|Rec.709 (Scene)|Auto",
                  ID_SPACE);
 
     out->num_params = P_NUM_PARAMS;
@@ -237,7 +238,18 @@ struct Inputs {
     double centerX = 0.0;  // optical centre, full-resolution layer pixels
     double centerY = 0.0;
     bool useGpu = true;
+    bool autoSpace = true;  // Color Space = Auto, resolved per render from the world's depth
 };
+
+// Auto: 32 bpc projects are normally linearised (or OCIO scene-linear), 8/16 bpc worlds hold
+// display-encoded pixels. A wrong guess only changes how linear the optics are; the decode and
+// re-encode use the same curve, so the picture itself always round-trips.
+cx::Settings ResolveSettings(const Inputs& inputs, bool floatWorld)
+{
+    cx::Settings s = inputs.settings;
+    if (inputs.autoSpace) s.space = floatWorld ? cx::ColorSpace::LinearRec709 : cx::ColorSpace::SRGB;
+    return s;
+}
 
 PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
 {
@@ -253,7 +265,10 @@ PF_Err ReadInputs(PF_InData* in_data, Inputs& out)
     };
     cx::Settings& s = out.settings;
     get(P_MODE, [&](PF_ParamDef& d) { s.mode = d.u.pd.value == 1 ? cx::Mode::Separation : cx::Mode::Aberration; });
-    get(P_SPACE, [&](PF_ParamDef& d) { s.space = (cx::ColorSpace)std::max(0, std::min(9, (int)d.u.pd.value - 1)); });
+    get(P_SPACE, [&](PF_ParamDef& d) {
+        out.autoSpace = d.u.pd.value >= 11;
+        s.space = (cx::ColorSpace)std::max(0, std::min(9, (int)d.u.pd.value - 1));
+    });
     get(P_PAIR, [&](PF_ParamDef& d) { s.pair = (cx::ColorPair)std::max(0, std::min(3, (int)d.u.pd.value - 1)); });
     get(P_ANGLE, [&](PF_ParamDef& d) { s.angleDeg = FIX_2_FLOAT(d.u.ad.value); });
     get(P_DISTANCE, [&](PF_ParamDef& d) { s.distance = d.u.fs_d.value; });
@@ -351,7 +366,7 @@ PF_Err RenderCPU(PF_InData* in_data, const Inputs& inputs, PF_EffectWorld* src, 
         g.srcPitch = (int)(src->rowbytes / sizeof(float));
         g.dstPitch = (int)(dst->rowbytes / sizeof(float));
         g.srcOrder = g.dstOrder = CK_ORDER_ARGB;
-        cx::render(*backend, cx::buildPlan(inputs.settings, g), src->data, dst->data);
+        cx::render(*backend, cx::buildPlan(ResolveSettings(inputs, true), g), src->data, dst->data);
         return PF_Err_NONE;
     }
 
@@ -384,7 +399,7 @@ PF_Err RenderCPU(PF_InData* in_data, const Inputs& inputs, PF_EffectWorld* src, 
     cx::Geometry g = MakeGeometry(in_data, inputs, src, dst);
     g.srcPitch = src->width * 4;
     g.dstPitch = dst->width * 4;
-    cx::render(*backend, cx::buildPlan(inputs.settings, g), in.data(), out.data());
+    cx::render(*backend, cx::buildPlan(ResolveSettings(inputs, false), g), in.data(), out.data());
 
     auto q = [maxv](float v) { return std::lround(std::min(1.0f, std::max(0.0f, v)) * maxv); };
     for (A_long y = 0; y < dst->height; ++y) {
@@ -449,7 +464,7 @@ PF_Err RenderGPU(PF_InData* in_data, PF_SmartRenderExtra* extra, const Inputs& i
     g.srcPitch = (int)(src->rowbytes / sizeof(float));
     g.dstPitch = (int)(dst->rowbytes / sizeof(float));
     g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
-    cx::render(*backend, cx::buildPlan(inputs.settings, g), srcMem, dstMem);
+    cx::render(*backend, cx::buildPlan(ResolveSettings(inputs, true), g), srcMem, dstMem);
     return PF_Err_NONE;
 }
 

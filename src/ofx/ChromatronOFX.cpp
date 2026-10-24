@@ -4,6 +4,7 @@
 #include "core/Chromatron.h"
 
 #include "ofxsImageEffect.h"
+#include "ofxColour.h"
 
 #include <cmath>
 #include <memory>
@@ -26,6 +27,7 @@ namespace cx = chromatron;
 
 const char* const kMode = "mode";
 const char* const kSpace = "colorSpace";
+const int kSpaceAuto = 10;  // Color Space option index of Auto (after the ten fixed encodings)
 const char* const kPair = "colorPair";
 const char* const kAngle = "angle";
 const char* const kDistance = "distance";
@@ -89,7 +91,7 @@ private:
         mode_->getValueAtTime(t, v);
         s.mode = v == 0 ? cx::Mode::Separation : cx::Mode::Aberration;
         space_->getValueAtTime(t, v);
-        s.space = (cx::ColorSpace)v;
+        s.space = v == kSpaceAuto ? hostColorSpace() : (cx::ColorSpace)v;
         pair_->getValueAtTime(t, v);
         s.pair = (cx::ColorPair)v;
         s.angleDeg = angle_->getValueAtTime(t);
@@ -104,6 +106,20 @@ private:
         s.samples = samples_->getValueAtTime(t);
         s.mix = mix_->getValueAtTime(t);
         return s;
+    }
+
+    // Auto: the source clip's colour space as reported through OpenFX colour management.
+    // Hosts without it (or reporting nothing usable) get Rec.709 Gamma 2.4, Resolve's default
+    // timeline encoding.
+    cx::ColorSpace hostColorSpace() const
+    {
+        const std::string style = getPropertySet().propGetString(kOfxImageEffectPropColourManagementStyle, 0, false);
+        if (!style.empty() && style != kOfxImageEffectColourManagementNone) {
+            const std::string name = src_->getPropertySet().propGetString(kOfxImageClipPropColourspace, 0, false);
+            cx::ColorSpace cs;
+            if (cx::colorSpaceFromName(name, cs)) return cs;
+        }
+        return cx::ColorSpace::Rec709Gamma24;
     }
 
     void updateEnabled()
@@ -263,6 +279,12 @@ void ChromatronFactory::describe(ImageEffectDescriptor& desc)
     desc.setTemporalClipAccess(false);
     desc.setRenderTwiceAlways(false);
     desc.setSupportsMultipleClipPARs(false);
+    // Ask hosts with OpenFX colour management to report each clip's colour space (used by Auto).
+    // Hosts without it ignore these properties.
+    desc.getPropertySet().propSetString(kOfxImageEffectPropColourManagementStyle,
+                                        kOfxImageEffectColourManagementCore, false);
+    desc.getPropertySet().propSetString(kOfxImageEffectPropColourManagementAvailableConfigs,
+                                        "ofx-native-v1.5_aces-v1.3_ocio-v2.3", false);
 #if CHROMATRON_HAS_OPENCL
     desc.setSupportsOpenCLBuffersRender(true);
 #endif
@@ -364,20 +386,19 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
 
     ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
     space->setLabels("Color Space", "Color Space", "Color Space");
-    space->setHint("Encoding of the timeline / clip. The optics run on linear light; ACES inputs are processed "
+    space->setHint("Encoding of the timeline / clip. Auto uses the colour space the host reports for the clip "
+                   "(OpenFX colour management) and falls back to Rec.709 Gamma 2.4. The optics run on linear light; "
+                   "ACES inputs are processed "
                    "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
                    "DaVinci Wide Gamut / Intermediate.");
-    space->appendOption("Linear (Rec.709 primaries)");
-    space->appendOption("sRGB");
-    space->appendOption("Rec.709 Gamma 2.4 (BT.1886)");
-    space->appendOption("ACEScg");
-    space->appendOption("ACEScct");
-    space->appendOption("ACEScc");
-    space->appendOption("ACES2065-1 (AP0)");
-    space->appendOption("DaVinci Wide Gamut / Intermediate");
-    space->appendOption("DaVinci Wide Gamut (linear)");
-    space->appendOption("Rec.709 (Scene)");
-    space->setDefault((int)cx::ColorSpace::Rec709Gamma24);
+    // Option indices are stored in projects: existing entries keep their index and Auto is
+    // appended. Hosts with OpenFX 1.5 choice ordering still list Auto first.
+    const char* const kSpaces[] = {"Linear (Rec.709 primaries)", "sRGB", "Rec.709 Gamma 2.4 (BT.1886)", "ACEScg",
+                                   "ACEScct", "ACEScc", "ACES2065-1 (AP0)", "DaVinci Wide Gamut / Intermediate",
+                                   "DaVinci Wide Gamut (linear)", "Rec.709 (Scene)"};
+    for (int i = 0; i < kSpaceAuto; ++i) space->appendOption(kSpaces[i], "", i + 1);
+    space->appendOption("Auto", "", 0);
+    space->setDefault(kSpaceAuto);
     space->setAnimates(false);
     page->addChild(*space);
 }
