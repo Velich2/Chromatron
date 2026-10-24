@@ -56,12 +56,12 @@ struct Settings {
 struct Geometry {
     int srcWidth = 0;
     int srcHeight = 0;
-    int srcPitch = 0;  // floats per source row
+    int srcPitch = 0;  // channel values per source row (floats, or halves when hostHalf)
     int srcOrder = CK_ORDER_RGBA;
 
     int dstWidth = 0;   // size of the region to write
     int dstHeight = 0;
-    int dstPitch = 0;   // floats per destination row
+    int dstPitch = 0;   // channel values per destination row
     int dstOrder = CK_ORDER_RGBA;
     int dstBaseX = 0;   // region origin inside the destination buffer
     int dstBaseY = 0;
@@ -73,6 +73,7 @@ struct Geometry {
     double centerY = 0.0;
     double halfDiagonal = 1.0; // frame half-diagonal, source pixels
     bool premultiplied = false; // RGB is associated with alpha (After Effects, premultiplied OFX clips)
+    bool hostHalf = false;      // src and dst hold 16-bit floats (Premiere GPU frames)
 };
 
 struct Plan {

@@ -17,6 +17,7 @@
 #endif
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <functional>
@@ -470,6 +471,56 @@ void testRadialPole()
     expect(finite, "huge Lateral on a small frame stays finite");
 }
 
+std::vector<uint16_t> toHalf(const std::vector<float>& v)
+{
+    std::vector<uint16_t> h(v.size());
+    for (size_t i = 0; i < v.size(); ++i) h[i] = ck_float_to_half(v[i]);
+    return h;
+}
+
+std::vector<float> fromHalf(const std::vector<uint16_t>& h)
+{
+    std::vector<float> v(h.size());
+    for (size_t i = 0; i < h.size(); ++i) v[i] = ck_half_to_float(h[i]);
+    return v;
+}
+
+Geometry halfGeometry(int w, int h)
+{
+    Geometry g = fullGeometry(w, h);
+    g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
+    g.hostHalf = true;
+    return g;
+}
+
+// Premiere GPU 16f frames: the same picture as the float render, to half precision.
+void testHalfHost()
+{
+    bool exact = true;
+    for (float v : {0.0f, -0.0f, 1.0f, -2.5f, 0.1f, 65504.0f, 6.1035156e-05f, 5.9604645e-08f, 3.0e-6f})
+        exact = exact && ck_half_to_float(ck_float_to_half(v)) == ck_half_to_float(ck_float_to_half(
+                                                                      ck_half_to_float(ck_float_to_half(v))));
+    expect(exact && ck_float_to_half(1.0f) == 0x3c00 && ck_float_to_half(65520.0f) == 0x7c00 &&
+               ck_half_to_float(0x0001) == 5.9604645e-08f && ck_float_to_half(1.0f + 1.0f / 2048.0f) == 0x3c00 && ck_float_to_half(1.0f + 3.0f / 2048.0f) == 0x3c02,
+           "half conversion: exact values, rounding to even, overflow, subnormals");
+
+    const Frame f = neutralChart(64, 48);
+    Settings s = aberration();
+    s.space = ColorSpace::Rec709Gamma24;
+    const std::vector<float> src = fromHalf(toHalf(f.px));  // same input precision for both renders
+    Geometry g = fullGeometry(f.w, f.h);
+    g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
+    const std::vector<float> ref = runCpu(s, g, src);
+    const std::vector<uint16_t> hsrc = toHalf(src);
+    std::vector<uint16_t> hdst(hsrc.size(), 0);
+    auto be = makeCpuBackend();
+    render(*be, buildPlan(s, halfGeometry(f.w, f.h)), hsrc.data(), hdst.data());
+    const std::vector<float> out = fromHalf(hdst);
+    float m = 0.0f;  // relative to half precision at each value
+    for (size_t i = 0; i < ref.size(); ++i) m = std::fmax(m, std::fabs(out[i] - ref[i]) / std::fmax(1.0f, std::fabs(ref[i])));
+    expect(m < 1.0f / 1024.0f, "16-bit float host buffers match the float render");
+}
+
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
@@ -520,6 +571,22 @@ void testOpenCL()
             be->download(dst, out.data(), bytes);
             std::snprintf(what, sizeof(what), "OpenCL images rendered on the CPU, mode %d", mode);
             expect(maxDiff(ref, out) == 0.0f, what);
+
+            // 16f frames, as Premiere hands them to OpenCL effects.
+            const std::vector<uint16_t> hsrc = toHalf(f.px);
+            std::vector<uint16_t> href(hsrc.size()), hout(hsrc.size());
+            const Plan hplan = buildPlan(s, halfGeometry(f.w, f.h));
+            render(*makeCpuBackend(), hplan, hsrc.data(), href.data());
+            const size_t hbytes = hsrc.size() * sizeof(uint16_t);
+            cl_mem hs = clCreateBuffer(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, hbytes, (void*)hsrc.data(), &err);
+            cl_mem hd = clCreateBuffer(ctx, CL_MEM_READ_WRITE, hbytes, nullptr, &err);
+            render(*be, hplan, hs, hd);
+            clEnqueueReadBuffer(q, hd, CL_TRUE, 0, hbytes, hout.data(), 0, nullptr, nullptr);
+            clReleaseMemObject(hs);
+            clReleaseMemObject(hd);
+            const float hd2 = maxDiff(fromHalf(href), fromHalf(hout));
+            std::snprintf(what, sizeof(what), "OpenCL 16f frames match CPU, mode %d (max diff %.2g)", mode, hd2);
+            expect(hd2 < 8e-3f, what);
         } catch (const std::exception& e) {
             std::printf("%s\n", e.what());
             expect(false, "OpenCL backend runs");
@@ -582,6 +649,7 @@ int main()
     testDaVinciWideGamut();
     testPremultipliedEdge(true);
     testRadialPole();
+    testHalfHost();
     testColorSpaceNames();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();

@@ -1,7 +1,7 @@
 // Chromatron - After Effects plug-in (SmartFX, 8/16/32 bpc, GPU via CUDA / OpenCL / Metal).
 // Premiere Pro loads the same plug-in but calls PF_Cmd_RENDER with BGRA frames, rendered on the CPU.
 
-#include "core/Chromatron.h"
+#include "ChromatronParams.h"
 
 #include "AEConfig.h"
 #include "entry.h"
@@ -24,38 +24,12 @@
 #include <vector>
 
 namespace cx = chromatron;
+using namespace chromatron::ae;
 
 namespace {
 
 // Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 0, 0, PF_Stage_DEVELOP, 1) = 524289.
 constexpr int kMajor = 1, kMinor = 0, kBug = 0, kBuild = 1;
-
-enum {
-    P_INPUT = 0,
-    P_MODE,
-    P_SEP_START,
-    P_PAIR,
-    P_ANGLE,
-    P_DISTANCE,
-    P_SPREAD,
-    P_SEP_END,
-    P_ABR_START,
-    P_LATERAL,
-    P_BALANCE,
-    P_CENTER,
-    P_THRESHOLD,
-    P_SOFTNESS,
-    P_SHOW_MASK,
-    P_ABR_END,
-    P_OPTICS_START,
-    P_BLUR,
-    P_SAMPLES,
-    P_MIX,
-    P_OPTICS_END,
-    P_USE_GPU,
-    P_SPACE,
-    P_NUM_PARAMS
-};
 
 // Stable disk IDs: never renumber, only append.
 enum {
@@ -245,14 +219,6 @@ PF_Err UpdateParamsUI(PF_InData* in, PF_OutData*, PF_ParamDef* params[])
     return err;
 }
 
-// Reads every parameter at the current time (SmartFX passes no params to render calls).
-struct Inputs {
-    cx::Settings settings;
-    double centerX = 0.0;  // optical centre, full-resolution layer pixels
-    double centerY = 0.0;
-    bool useGpu = true;
-    bool autoSpace = true;  // Color Space = Auto, resolved per render from the world's depth
-};
 
 // Auto: 32 bpc projects are normally linearised (or OCIO scene-linear), 8/16 bpc worlds hold
 // display-encoded pixels. A wrong guess only changes how linear the optics are; the decode and
@@ -266,30 +232,23 @@ cx::Settings ResolveSettings(const Inputs& inputs, bool floatWorld)
 
 void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
 {
-    cx::Settings& s = out.settings;
     switch (index) {
-    case P_MODE: s.mode = d.u.pd.value == 1 ? cx::Mode::Separation : cx::Mode::Aberration; break;
-    case P_SPACE:
-        out.autoSpace = d.u.pd.value >= 11;
-        s.space = (cx::ColorSpace)std::max(0, std::min(9, (int)d.u.pd.value - 1));
-        break;
-    case P_PAIR: s.pair = (cx::ColorPair)std::max(0, std::min(3, (int)d.u.pd.value - 1)); break;
-    case P_ANGLE: s.angleDeg = FIX_2_FLOAT(d.u.ad.value); break;
-    case P_DISTANCE: s.distance = d.u.fs_d.value; break;
-    case P_SPREAD: s.spread = d.u.fs_d.value; break;
-    case P_LATERAL: s.lateral = d.u.fs_d.value; break;
-    case P_BALANCE: s.balance = d.u.fs_d.value; break;
-    case P_CENTER:
-        out.centerX = FIX_2_FLOAT(d.u.td.x_value);
-        out.centerY = FIX_2_FLOAT(d.u.td.y_value);
-        break;
-    case P_THRESHOLD: s.threshold = d.u.fs_d.value; break;
-    case P_SOFTNESS: s.softness = d.u.fs_d.value; break;
-    case P_SHOW_MASK: s.showMask = d.u.bd.value != 0; break;
-    case P_BLUR: s.channelBlur = d.u.fs_d.value; break;
-    case P_SAMPLES: s.samples = (int)d.u.sd.value; break;
-    case P_MIX: s.mix = d.u.fs_d.value / 100.0; break;
-    case P_USE_GPU: out.useGpu = d.u.bd.value != 0; break;
+    case P_MODE:
+    case P_PAIR:
+    case P_SPACE: SetParam(index, d.u.pd.value, 0, out); break;
+    case P_ANGLE: SetParam(index, FIX_2_FLOAT(d.u.ad.value), 0, out); break;
+    case P_CENTER: SetParam(index, FIX_2_FLOAT(d.u.td.x_value), FIX_2_FLOAT(d.u.td.y_value), out); break;
+    case P_SHOW_MASK:
+    case P_USE_GPU: SetParam(index, d.u.bd.value, 0, out); break;
+    case P_SAMPLES: SetParam(index, d.u.sd.value, 0, out); break;
+    case P_DISTANCE:
+    case P_SPREAD:
+    case P_LATERAL:
+    case P_BALANCE:
+    case P_THRESHOLD:
+    case P_SOFTNESS:
+    case P_BLUR:
+    case P_MIX: SetParam(index, d.u.fs_d.value, 0, out); break;
     default: break;  // input layer, topic groups
     }
 }
@@ -523,9 +482,7 @@ PF_Err PremiereRender(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* par
     if (!src->data || !dst->data || dst->width <= 0 || dst->height <= 0) return PF_Err_NONE;
     Inputs inputs;
     for (int index = P_INPUT + 1; index < P_NUM_PARAMS; ++index) ReadParam(index, *params[index], inputs);
-    // Auto: Premiere sequences hold display-encoded Rec.709 at either depth unless linear compositing is on.
-    cx::Settings settings = inputs.settings;
-    if (inputs.autoSpace) settings.space = cx::ColorSpace::Rec709Gamma24;
+    const cx::Settings settings = PremiereSettings(inputs);
 
     Suite<PF_PixelFormatSuite1> formats(in_data, kPFPixelFormatSuite, kPFPixelFormatSuiteVersion1);
     if (!formats) return PF_Err_BAD_CALLBACK_PARAM;

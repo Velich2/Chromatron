@@ -5,11 +5,13 @@ rem   build_windows.bat            configure, build Release, run tests, install 
 rem                                (run as administrator: writes to Program Files)
 rem   build_windows.bat noinstall  build and test only
 rem
-rem Override the SDK location without editing:  set AE_SDK_ROOT=D:\path\to\sdk
+rem Override the SDK locations without editing:  set AE_SDK_ROOT=D:\path\to\sdk
+rem                                             set PR_SDK_ROOT=D:\path\to\premiere\sdk
 
 setlocal EnableDelayedExpansion
 
 if not defined AE_SDK_ROOT set "AE_SDK_ROOT=C:\Users\Velich\AfterEffectsSDK_26.5_win"
+if not defined PR_SDK_ROOT set "PR_SDK_ROOT=C:\Users\Velich\Premiere_Pro_24.0_C++_Win_SDK"
 set "BUILD_DIR=%~dp0build"
 
 rem --- After Effects SDK: find the folder that contains Examples\Headers\AE_Effect.h ---
@@ -27,6 +29,21 @@ if not defined AE_SDK_DIR (
     exit /b 1
 )
 echo After Effects SDK: %AE_SDK_DIR%
+
+rem --- Premiere Pro SDK (optional, GPU rendering in Premiere): folder with Examples\Headers\PrSDKGPUFilter.h ---
+set "PR_SDK_DIR="
+for /f "delims=" %%f in ('dir /s /b "%PR_SDK_ROOT%\PrSDKGPUFilter.h" 2^>nul') do (
+    if not defined PR_SDK_DIR (
+        set "HEADER=%%f"
+        set "CANDIDATE=!HEADER:\Examples\Headers\PrSDKGPUFilter.h=!"
+        if not "!CANDIDATE!"=="!HEADER!" set "PR_SDK_DIR=!CANDIDATE!"
+    )
+)
+if defined PR_SDK_DIR (
+    echo Premiere Pro SDK: !PR_SDK_DIR!
+) else (
+    echo Premiere Pro SDK not found under "%PR_SDK_ROOT%": Premiere will render on the CPU.
+)
 
 rem --- Visual Studio: newest install with the C++ toolset (2022 = 17, 2026 = 18) ---
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -72,7 +89,7 @@ if exist "%BUILD_DIR%\CMakeCache.txt" (
 
 rem --- Configure, build, test ---
 cmake -S "%~dp0." -B "%BUILD_DIR%" -G "%GENERATOR%" -A x64 ^
-    -DCHROMATRON_BUILD_AE=ON -DAE_SDK_DIR="%AE_SDK_DIR%"
+    -DCHROMATRON_BUILD_AE=ON -DAE_SDK_DIR="%AE_SDK_DIR%" -DPR_SDK_DIR="%PR_SDK_DIR%"
 if errorlevel 1 exit /b 1
 
 cmake --build "%BUILD_DIR%" --config Release --parallel

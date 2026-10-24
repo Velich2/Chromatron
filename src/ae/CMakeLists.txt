@@ -72,3 +72,20 @@ endif()
 
 target_include_directories(chromatron_ae PRIVATE ${AE_INCLUDES})
 target_link_libraries(chromatron_ae PRIVATE chromatron_core)
+
+# Premiere Pro GPU filter (xGPUFilterEntry in the same module). Optional: without the Premiere Pro
+# SDK the plug-in still works in Premiere, rendering on the CPU.
+set(PR_SDK_DIR "" CACHE PATH "Premiere Pro SDK root (contains Examples/Headers): enables the Premiere GPU filter")
+if(PR_SDK_DIR)
+    if(NOT EXISTS "${PR_SDK_DIR}/Examples/Headers/PrSDKGPUFilter.h")
+        message(FATAL_ERROR "PR_SDK_DIR must point at the Premiere Pro SDK (Examples/Headers/PrSDKGPUFilter.h)")
+    endif()
+    target_sources(chromatron_ae PRIVATE ChromatronPremiereGPU.cpp)
+    set_source_files_properties(ChromatronPremiereGPU.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${PR_SDK_DIR}/Examples/Headers;${PR_SDK_DIR}/Examples/Projects/GPUVideoFilter/Utils"
+        COMPILE_DEFINITIONS $<IF:$<PLATFORM_ID:Windows>,PRWIN_ENV,PRMAC_ENV>)
+    if(APPLE)
+        target_link_options(chromatron_ae PRIVATE -Wl,-exported_symbol,_xGPUFilterEntry)
+    endif()
+    message(STATUS "Premiere Pro GPU filter: ${PR_SDK_DIR}")
+endif()

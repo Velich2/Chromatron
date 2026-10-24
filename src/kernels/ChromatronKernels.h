@@ -45,11 +45,11 @@
 typedef struct CKParams {
     int srcWidth;     // working buffer (= source image) size
     int srcHeight;
-    int srcPitch;     // source row stride, in floats
+    int srcPitch;     // source row stride, in channel values (floats, or halves when hostHalf)
     int srcOrder;     // CK_ORDER_*
     int dstWidth;     // region written by the gather pass
     int dstHeight;
-    int dstPitch;     // destination row stride, in floats
+    int dstPitch;     // destination row stride, in channel values
     int dstOrder;
     int dstBaseX;     // first written pixel inside the destination buffer
     int dstBaseY;
@@ -64,6 +64,7 @@ typedef struct CKParams {
     int transfer;     // CK_TRANSFER_* of the host image
     int useMatrix;    // host primaries differ from the working primaries
     int premultiplied; // host RGB is associated with alpha: (de|en)code the colour, not RGB*alpha
+    int hostHalf;     // host buffers hold IEEE 754 half floats (Premiere GPU 16f frames)
     float lumR;       // luminance weights of the working primaries
     float lumG;
     float lumB;
@@ -108,6 +109,8 @@ typedef struct CKPix {
 // ---------------------------------------------------------------------------
 #if defined(CK_CPU)
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #define CK_FN static inline
 #define CK_G
 #define CK_PARAMS const CKParams&
@@ -121,7 +124,46 @@ typedef struct CKPix {
 #define ck_exp2f(x) std::exp2(x)
 #define ck_fminf(a, b) std::fmin(a, b)
 #define ck_fmaxf(a, b) std::fmax(a, b)
+
+static inline float ck_half_to_float(uint16_t h)
+{
+    const uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    const uint32_t e = (h >> 10) & 0x1fu;
+    const uint32_t m = h & 0x3ffu;
+    if (e == 0) return (sign ? -1.0f : 1.0f) * (float)m * (1.0f / 16777216.0f);  // zero / subnormal: m * 2^-24
+    const uint32_t x = e == 31 ? sign | 0x7f800000u | (m << 13) : sign | ((e + 112u) << 23) | (m << 13);
+    float f;
+    std::memcpy(&f, &x, sizeof(f));
+    return f;
+}
+
+// Round to nearest even, as the GPU conversions do.
+static inline uint16_t ck_float_to_half(float f)
+{
+    uint32_t x;
+    std::memcpy(&x, &f, sizeof(x));
+    const uint32_t sign = (x >> 16) & 0x8000u;
+    const uint32_t ax = x & 0x7fffffffu;
+    if (ax >= 0x7f800000u) return (uint16_t)(sign | (ax > 0x7f800000u ? 0x7e00u : 0x7c00u));
+    if (ax >= 0x477ff000u) return (uint16_t)(sign | 0x7c00u);  // >= 65520 rounds to infinity
+    if (ax < 0x38800000u) {                                     // below 2^-14: subnormal half
+        if (ax < 0x33000000u) return (uint16_t)sign;
+        const uint32_t m = (ax & 0x7fffffu) | 0x800000u;
+        const uint32_t shift = 126u - (ax >> 23);
+        uint32_t h = m >> shift;
+        const uint32_t rem = m & ((1u << shift) - 1u), halfway = 1u << (shift - 1u);
+        if (rem > halfway || (rem == halfway && (h & 1u))) ++h;
+        return (uint16_t)(sign | h);
+    }
+    uint32_t h = (ax - 0x38000000u) >> 13;
+    const uint32_t rem = ax & 0x1fffu;
+    if (rem > 0x1000u || (rem == 0x1000u && (h & 1u))) ++h;
+    return (uint16_t)(sign | h);
+}
+#define ck_load_half(ptr, i) ck_half_to_float(((const uint16_t*)(ptr))[i])
+#define ck_store_half(ptr, i, v) (((uint16_t*)(ptr))[i] = ck_float_to_half(v))
 #elif defined(CK_CUDA)
+#include <cuda_fp16.h>
 #define CK_FN static __device__ __forceinline__
 #define CK_G
 #define CK_PARAMS const CKParams&
@@ -135,6 +177,8 @@ typedef struct CKPix {
 #define ck_exp2f(x) exp2f(x)
 #define ck_fminf(a, b) fminf(a, b)
 #define ck_fmaxf(a, b) fmaxf(a, b)
+#define ck_load_half(ptr, i) __half2float(((const __half*)(ptr))[i])
+#define ck_store_half(ptr, i, v) (((__half*)(ptr))[i] = __float2half_rn(v))
 #elif defined(CK_OPENCL)
 #define CK_FN static inline
 #define CK_G __global
@@ -149,6 +193,9 @@ typedef struct CKPix {
 #define ck_exp2f(x) exp2(x)
 #define ck_fminf(a, b) fmin(a, b)
 #define ck_fmaxf(a, b) fmax(a, b)
+// vload_half / vstore_half are core OpenCL: no cl_khr_fp16 needed.
+#define ck_load_half(ptr, i) vload_half(i, (__global const half*)(ptr))
+#define ck_store_half(ptr, i, v) vstore_half_rte(v, i, (__global half*)(ptr))
 #elif defined(CK_METAL)
 #define CK_FN static inline
 #define CK_G device
@@ -163,7 +210,21 @@ typedef struct CKPix {
 #define ck_exp2f(x) exp2(x)
 #define ck_fminf(a, b) fmin(a, b)
 #define ck_fmaxf(a, b) fmax(a, b)
+#define ck_load_half(ptr, i) float(reinterpret_cast<device const half*>(ptr)[i])
+#define ck_store_half(ptr, i, v) (reinterpret_cast<device half*>(ptr)[i] = half(v))
 #endif
+
+// Channel value i of a host buffer, stored as float or half (CKParams.hostHalf).
+CK_FN float ck_ld(CK_PARAMS p, CK_G const float* img, int i)
+{
+    return p.hostHalf ? ck_load_half(img, i) : img[i];
+}
+
+CK_FN void ck_st(CK_PARAMS p, CK_G float* img, int i, float v)
+{
+    if (p.hostHalf) ck_store_half(img, i, v);
+    else img[i] = v;
+}
 
 CK_FN int ck_clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -292,10 +353,10 @@ CK_FN void ck_import(int x, int y, CK_PARAMS p, CK_G const float* src, CK_G floa
 {
     const int s = y * p.srcPitch + x * 4;
     const int d = (y * p.srcWidth + x) * 4;
-    const float a = src[s + ck_chan(p.srcOrder, 3)];
-    float r = src[s + ck_chan(p.srcOrder, 0)];
-    float g = src[s + ck_chan(p.srcOrder, 1)];
-    float b = src[s + ck_chan(p.srcOrder, 2)];
+    const float a = ck_ld(p, src, s + ck_chan(p.srcOrder, 3));
+    float r = ck_ld(p, src, s + ck_chan(p.srcOrder, 0));
+    float g = ck_ld(p, src, s + ck_chan(p.srcOrder, 1));
+    float b = ck_ld(p, src, s + ck_chan(p.srcOrder, 2));
     // Premultiplied input: the transfer curve applies to the colour, so divide alpha out
     // first and associate again in linear light (otherwise soft edges get dark halos).
     const bool assoc = p.premultiplied && p.transfer != CK_TRANSFER_LINEAR && a > 1e-6f;
@@ -422,10 +483,10 @@ CK_FN CK_G const float* ck_level(int l, CK_G const float* L0, CK_G const float* 
 CK_FN void ck_write(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix v)
 {
     const int o = (y + p.dstBaseY) * p.dstPitch + (x + p.dstBaseX) * 4;
-    dst[o + ck_chan(p.dstOrder, 0)] = v.r;
-    dst[o + ck_chan(p.dstOrder, 1)] = v.g;
-    dst[o + ck_chan(p.dstOrder, 2)] = v.b;
-    dst[o + ck_chan(p.dstOrder, 3)] = v.a;
+    ck_st(p, dst, o + ck_chan(p.dstOrder, 0), v.r);
+    ck_st(p, dst, o + ck_chan(p.dstOrder, 1), v.g);
+    ck_st(p, dst, o + ck_chan(p.dstOrder, 2), v.b);
+    ck_st(p, dst, o + ck_chan(p.dstOrder, 3), v.a);
 }
 
 // Converts a working-space pixel back to the host's primaries and encoding.
