@@ -67,7 +67,11 @@ enum {
     ID_ABR_RESET,
     ID_PHYS_RESET,
     ID_MASK_RESET,
-    ID_OPTICS_RESET
+    ID_OPTICS_RESET,
+    ID_FALLOFF,
+    ID_ANAMORPHIC,
+    ID_HIGHLIGHT,
+    ID_SATURATION
 };  // ID_SAMPLES is retired (Spectral Samples is automatic now)
 
 // Scoped PICA suite acquisition.
@@ -160,6 +164,7 @@ constexpr double kLateralColor = 4, kAxialColor = 3, kFocus = 550;
 constexpr double kThreshold = 0, kSoftness = 0.5;
 constexpr PF_Boolean kShowMask = FALSE;
 constexpr double kCenterPercent = 50, kBlur = 0, kMix = 100;
+constexpr double kFalloff = 1, kAnamorphic = 0, kHighlight = 0, kSaturation = 100;
 }  // namespace dflt
 
 PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
@@ -225,6 +230,15 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_POINT("Optical Center", dflt::kCenterPercent, dflt::kCenterPercent, FALSE, ID_CENTER);
     AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Falloff", 1, 8, 1, 4, dflt::kFalloff, PF_Precision_HUNDREDTHS, 0, 0, ID_FALLOFF);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Anamorphic", -1, 1, -1, 1, dflt::kAnamorphic, PF_Precision_HUNDREDTHS, 0, 0, ID_ANAMORPHIC);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Highlight Boost", 0, 8, 0, 4, dflt::kHighlight, PF_Precision_HUNDREDTHS, 0, 0, ID_HIGHLIGHT);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Fringe Saturation", 0, 1000, 0, 200, dflt::kSaturation, PF_Precision_TENTHS,
+                         PF_ValueDisplayFlag_PERCENT, 0, ID_SATURATION);
+    AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Fringe Blur", 0, 200, 0, 20, dflt::kBlur, PF_Precision_TENTHS, 0, 0, ID_BLUR);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Mix", 0, 100, 0, 100, dflt::kMix, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIX);
@@ -263,7 +277,7 @@ PF_Err UpdateParamsUI(PF_InData* in, PF_OutData*, PF_ParamDef* params[])
     for (int i : {P_PAIR, P_ANGLE, P_DISTANCE, P_SPREAD}) enable(i, sep);
     for (int i : {P_LATERAL, P_BALANCE}) enable(i, abr);
     for (int i : {P_CORRECTION, P_LATERAL_COLOR, P_AXIAL_COLOR, P_FOCUS}) enable(i, phys);
-    enable(P_CENTER, !sep);
+    for (int i : {P_CENTER, P_FALLOFF, P_ANAMORPHIC}) enable(i, !sep);
     enable(P_BLUR, !phys);  // the physical lens defocuses through Axial Color
     return err;
 }
@@ -307,6 +321,10 @@ PF_Err UserChangedParam(PF_InData* in, PF_OutData* out, PF_ParamDef* params[], c
             d.u.td.x_value = FLOAT2FIX(in->width * dflt::kCenterPercent / 100.0);
             d.u.td.y_value = FLOAT2FIX(in->height * dflt::kCenterPercent / 100.0);
             break;
+        case P_FALLOFF: d.u.fs_d.value = dflt::kFalloff; break;
+        case P_ANAMORPHIC: d.u.fs_d.value = dflt::kAnamorphic; break;
+        case P_HIGHLIGHT: d.u.fs_d.value = dflt::kHighlight; break;
+        case P_SATURATION: d.u.fs_d.value = dflt::kSaturation; break;
         case P_BLUR: d.u.fs_d.value = dflt::kBlur; break;
         case P_MIX: d.u.fs_d.value = dflt::kMix; break;
         default: continue;
@@ -337,6 +355,10 @@ void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
     case P_FOCUS:
     case P_THRESHOLD:
     case P_SOFTNESS:
+    case P_FALLOFF:
+    case P_ANAMORPHIC:
+    case P_HIGHLIGHT:
+    case P_SATURATION:
     case P_BLUR:
     case P_MIX: SetParam(index, d.u.fs_d.value, 0, out); break;
     default: break;  // input layer, topic groups
@@ -365,7 +387,13 @@ PF_Err SmartPreRender(PF_InData* in_data, PF_OutData*, PF_PreRenderExtra* extra)
     ERR(ReadInputs(in_data, inputs));
     if (err) return err;
 
-    const A_long margin = (A_long)std::ceil(cx::sampleMargin(inputs.settings, downsampleX(in_data)));
+    // The lens modes grow past Lateral beyond the frame corner when the optical centre is off-centre.
+    const double w = in_data->width * downsampleX(in_data), h = in_data->height * downsampleY(in_data);
+    double fieldMax = 0.0;
+    for (double x : {0.0, w})
+        for (double y : {0.0, h}) fieldMax = std::max(fieldMax, std::hypot(x - inputs.centerX, y - inputs.centerY));
+    fieldMax /= std::max(1.0, 0.5 * std::hypot(w, h));
+    const A_long margin = (A_long)std::ceil(cx::sampleMargin(inputs.settings, downsampleX(in_data), fieldMax));
 
     PF_RenderRequest req = extra->input->output_request;
     req.rect.left -= margin;

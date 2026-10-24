@@ -16,14 +16,14 @@ __global__ void k_import(CKParams p, const float* src, float* work)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_import(x, y, p, src, work);
+    if (x < p.srcWidth && y < p.srcHeight) ck_import(x, y, &p, src, work);
 }
 
 __global__ void k_luma(CKParams p, const float* work, float* luma)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_luma(x, y, p, work, luma);
+    if (x < p.srcWidth && y < p.srcHeight) ck_luma(x, y, &p, work, luma);
 }
 
 __global__ void k_blur(CKBlurParams b, const float* src, float* dst)
@@ -37,7 +37,7 @@ __global__ void k_contrast(CKParams p, const float* luma, const float* lumaBlur,
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_contrast(x, y, p, luma, lumaBlur, mask);
+    if (x < p.srcWidth && y < p.srcHeight) ck_contrast(x, y, &p, luma, lumaBlur, mask);
 }
 
 __global__ void k_gather(CKParams p, const float* L0, const float* L1, const float* L2, const float* L3,
@@ -45,7 +45,7 @@ __global__ void k_gather(CKParams p, const float* L0, const float* L1, const flo
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.dstWidth && y < p.dstHeight) ck_gather(x, y, p, L0, L1, L2, L3, mask, dst);
+    if (x < p.dstWidth && y < p.dstHeight) ck_gather(x, y, &p, L0, L1, L2, L3, mask, dst);
 }
 
 void check(cudaError_t err, const char* what)

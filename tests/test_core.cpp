@@ -92,6 +92,15 @@ Frame neutralChart(int w, int h)
     });
 }
 
+// Every look control away from its neutral value (backend parity).
+void withLook(Settings& s)
+{
+    s.highlightBoost = 1.5;
+    s.falloff = 2.5;
+    s.anamorphic = 0.5;
+    s.fringeSaturation = 1.6;
+}
+
 Settings aberration()
 {
     // Explicit values, independent of the plug-in's UI defaults.
@@ -633,6 +642,149 @@ void testHalfHost()
     expect(m < 1.0f / 1024.0f, "16-bit float host buffers match the float render");
 }
 
+// Highlight Boost expands highlights for the optics and compresses them back exactly, so pixels
+// without fringes come out as they went in; next to a clipped white the fringe spills light
+// instead of tinting the white.
+void testHighlightBoost()
+{
+    const Frame ramp = makeFrame(64, 8, [](int x, int y, float* p) {
+        const float v = x / 32.0f;  // 0 .. 2: below the knee, the knee, white and above
+        p[0] = v;
+        p[1] = 0.5f * v;
+        p[2] = 1.0f;
+        p[3] = y < 4 ? 1.0f : 0.25f + 0.7f * (x % 5) / 4.0f;
+    });
+    Settings s = aberration();
+    s.lateral = 0.0;
+    s.channelBlur = 0.0;
+    s.highlightBoost = 3.0;
+    Geometry g = fullGeometry(ramp.w, ramp.h);
+    float worst = maxDiff(runCpu(s, g, ramp.px), ramp.px);
+    s.space = ColorSpace::SRGB;
+    g.premultiplied = true;
+    Frame premult = ramp;
+    for (size_t i = 0; i < premult.px.size(); i += 4)
+        for (int c = 0; c < 3; ++c) premult.px[i + c] = std::fmin(premult.px[i + c], 1.0f) * premult.px[i + 3];
+    worst = std::fmax(worst, maxDiff(runCpu(s, g, premult.px), premult.px));
+    char what[96];
+    std::snprintf(what, sizeof(what), "Highlight Boost round-trips untouched pixels (%.2g)", worst);
+    expect(worst < 1e-5f, what);
+
+    // Black lines on a clipped white, axial colour.
+    const Frame lines = makeFrame(128, 32, [](int x, int, float* p) {
+        p[0] = p[1] = p[2] = (x % 16) < 3 ? 0.0f : 1.0f;
+        p[3] = 1.0f;
+    });
+    Settings phys;
+    phys.mode = Mode::Physical;
+    phys.space = ColorSpace::LinearRec709;
+    phys.lateralColor = 0.0;
+    phys.axialColor = 6.0;
+    auto measure = [&](double boost, float& tint, float& spill) {
+        phys.highlightBoost = boost;
+        const std::vector<float> out = runCpu(phys, fullGeometry(lines.w, lines.h), lines.px);
+        tint = 0.0f;
+        spill = 0.0f;
+        for (int y = 0; y < lines.h; ++y)
+            for (int x = 16; x < lines.w - 16; ++x) {
+                const float* o = &out[((size_t)y * lines.w + x) * 4];
+                if (lines.px[((size_t)y * lines.w + x) * 4] > 0.5f)
+                    tint = std::fmax(tint, std::fmax(o[0], std::fmax(o[1], o[2])) - std::fmin(o[0], std::fmin(o[1], o[2])));
+                else if (x % 16 == 1)
+                    spill = std::fmax(spill, o[0] + o[1] + o[2]);
+            }
+    };
+    float tint0, spill0, tint2, spill2;
+    measure(0.0, tint0, spill0);
+    measure(2.0, tint2, spill2);
+    std::snprintf(what, sizeof(what), "boosted white keeps clean next to a fringe (tint %.3f -> %.3f)", tint0, tint2);
+    expect(tint2 < 0.5f * tint0, what);
+    expect(spill2 > spill0, "boosted highlights spill more light into the dark line");
+}
+
+// Centroid of channel c in a square window around (x0, y0).
+void centroid(const std::vector<float>& px, int w, int c, int x0, int y0, int r, double& cx, double& cy)
+{
+    double sx = 0.0, sy = 0.0, sw = 0.0;
+    for (int y = y0 - r; y <= y0 + r; ++y)
+        for (int x = x0 - r; x <= x0 + r; ++x) {
+            const double v = px[((size_t)y * w + x) * 4 + c];
+            sx += v * x;
+            sy += v * y;
+            sw += v;
+        }
+    cx = sx / sw;
+    cy = sy / sw;
+}
+
+// Falloff keeps Lateral at the corner and cleans up the centre; Anamorphic keeps only the
+// horizontal displacement. Measured as the red / blue split of small dots on the diagonal.
+void testFalloffAnamorphic()
+{
+    const int n = 512;
+    const double c = 0.5 * n - 0.5, hd = 0.5 * std::sqrt(2.0) * n;
+    const double nearPos = c + 0.5 * hd / std::sqrt(2.0), farPos = c + 0.9 * hd / std::sqrt(2.0);
+    const Frame f = makeFrame(n, n, [&](int x, int y, float* p) {
+        float v = 0.0f;
+        for (double q : {nearPos, farPos}) v += (float)std::exp(-((x - q) * (x - q) + (y - q) * (y - q)) / 2.0);
+        p[0] = p[1] = p[2] = v;
+        p[3] = 1.0f;
+    });
+    Settings s = aberration();
+    s.channelBlur = 0.0;
+    s.lateral = 20.0;
+    auto split = [&](double falloff, double anamorphic, double pos, double& dx, double& dy) {
+        s.falloff = falloff;
+        s.anamorphic = anamorphic;
+        const std::vector<float> out = runCpu(s, fullGeometry(n, n), f.px);
+        const int at = (int)std::lround(pos);
+        double rx, ry, bx, by;
+        centroid(out, n, 0, at, at, 24, rx, ry);
+        centroid(out, n, 2, at, at, 24, bx, by);
+        dx = rx - bx;
+        dy = ry - by;
+    };
+    double nx1, ny1, fx1, fy1, nx3, ny3, fx3, fy3, ax, ay;
+    split(1.0, 0.0, nearPos, nx1, ny1);
+    split(1.0, 0.0, farPos, fx1, fy1);
+    split(3.0, 0.0, nearPos, nx3, ny3);
+    split(3.0, 0.0, farPos, fx3, fy3);
+    const double nearRatio = std::hypot(nx3, ny3) / std::hypot(nx1, ny1);
+    const double farRatio = std::hypot(fx3, fy3) / std::hypot(fx1, fy1);
+    char what[128];
+    std::snprintf(what, sizeof(what), "Falloff 3: fringe x%.2f at half field (0.25), x%.2f at 0.9 (0.81)", nearRatio, farRatio);
+    expect(nearRatio > 0.18 && nearRatio < 0.32 && farRatio > 0.72 && farRatio < 0.9, what);
+
+    split(1.0, 1.0, farPos, ax, ay);
+    std::snprintf(what, sizeof(what), "Anamorphic 1: horizontal split %.2f px (round %.2f), vertical %.2f px", ax, fx1, ay);
+    expect(std::fabs(ay) < 0.05 * std::fabs(fx1) && std::fabs(ax - fx1) < 0.1 * std::fabs(fx1), what);
+}
+
+// Fringe Saturation scales only the colour the dispersion adds: none at 0, more above 1, and no
+// channel pushed lower than it already is at 1 (next to HDR lines the clean fringe dips below 0).
+void testFringeSaturation()
+{
+    const Frame f = neutralChart(128, 96);
+    auto chroma = [&](double saturation, float& lowest) {
+        Settings s = aberration();
+        s.fringeSaturation = saturation;
+        const std::vector<float> out = runCpu(s, fullGeometry(f.w, f.h), f.px);
+        float m = 0.0f;
+        lowest = 1e30f;
+        for (size_t i = 0; i < out.size(); i += 4) {
+            m = std::fmax(m, std::fmax(out[i], std::fmax(out[i + 1], out[i + 2])) -
+                                 std::fmin(out[i], std::fmin(out[i + 1], out[i + 2])));
+            lowest = std::fmin(lowest, std::fmin(out[i], std::fmin(out[i + 1], out[i + 2])));
+        }
+        return m;
+    };
+    float low0, low1, low3;
+    const float c0 = chroma(0.0, low0), c1 = chroma(1.0, low1), c3 = chroma(3.0, low3);
+    char what[128];
+    std::snprintf(what, sizeof(what), "Fringe Saturation: chroma %.3f at 0, %.3f at 1, %.3f at 3, lowest %.2g at 1, %.2g at 3", c0, c1, c3, low1, low3);
+    expect(c0 < 1e-4f && c3 > 1.3f * c1 && low3 >= std::fmin(low1, 0.0f) - 1e-5f, what);
+}
+
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
@@ -653,12 +805,14 @@ void testOpenCL()
     cl_int err;
     cl_context ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
     cl_command_queue q = clCreateCommandQueue(ctx, device, 0, &err);
-    for (int mode = 0; mode < 3; ++mode) {
+    for (int run = 0; run < 6; ++run) {
+        const int mode = run % 3;
         Settings s = aberration();
         s.mode = (Mode)mode;
         s.correction = LensCorrection::Achromat;
         s.threshold = 0.4;
         s.distance = 9.0;
+        if (run >= 3) withLook(s);
         s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
         Frame f = neutralChart(96, 64);
         const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
@@ -676,13 +830,13 @@ void testOpenCL()
             clEnqueueReadBuffer(q, dst, CL_TRUE, 0, bytes, out.data(), 0, nullptr, nullptr);
             const float d = maxDiff(ref, out);
             char what[96];
-            std::snprintf(what, sizeof(what), "OpenCL matches CPU, mode %d (max diff %.2g)", mode, d);
+            std::snprintf(what, sizeof(what), "OpenCL matches CPU, run %d (max diff %.2g)", run, d);
             expect(d < 2e-3f, what);
 
             // "Use GPU" off: OpenCL images rendered on the CPU through host memory.
             renderOnHost(*be, buildPlan(s, g), src, bytes, dst, bytes);
             be->download(dst, out.data(), bytes);
-            std::snprintf(what, sizeof(what), "OpenCL images rendered on the CPU, mode %d", mode);
+            std::snprintf(what, sizeof(what), "OpenCL images rendered on the CPU, run %d", run);
             expect(maxDiff(ref, out) == 0.0f, what);
 
             // 16f frames, as Premiere hands them to OpenCL effects.
@@ -698,7 +852,7 @@ void testOpenCL()
             clReleaseMemObject(hs);
             clReleaseMemObject(hd);
             const float hd2 = maxDiff(fromHalf(href), fromHalf(hout));
-            std::snprintf(what, sizeof(what), "OpenCL 16f frames match CPU, mode %d (max diff %.2g)", mode, hd2);
+            std::snprintf(what, sizeof(what), "OpenCL 16f frames match CPU, run %d (max diff %.2g)", run, hd2);
             expect(hd2 < 8e-3f, what);
         } catch (const std::exception& e) {
             std::printf("%s\n", e.what());
@@ -716,12 +870,14 @@ void testOpenCL()
 #if CHROMATRON_HAS_METAL
 void testMetal()
 {
-    for (int mode = 0; mode < 3; ++mode) {
+    for (int run = 0; run < 6; ++run) {
+        const int mode = run % 3;
         Settings s = aberration();
         s.mode = (Mode)mode;
         s.correction = LensCorrection::Achromat;
         s.threshold = 0.4;
         s.distance = 9.0;
+        if (run >= 3) withLook(s);
         s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
         Frame f = neutralChart(96, 64);
         const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
@@ -737,7 +893,7 @@ void testMetal()
             }
             const float d = maxDiff(ref, out);
             char what[96];
-            std::snprintf(what, sizeof(what), "Metal matches CPU, mode %d (max diff %.2g)", mode, d);
+            std::snprintf(what, sizeof(what), "Metal matches CPU, run %d (max diff %.2g)", run, d);
             expect(d < 2e-3f, what);
         } catch (const std::exception& e) {
             std::printf("%s\n", e.what());
@@ -768,6 +924,9 @@ int main()
     testPhysical();
     testSeparationMask();
     testColorSpaceNames();
+    testHighlightBoost();
+    testFalloffAnamorphic();
+    testFringeSaturation();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
 #endif

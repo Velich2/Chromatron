@@ -109,10 +109,35 @@ Whole frame, `--mode abr --lateral 24`:
 | Parameter | What it does |
 |---|---|
 | Optical Center | optical axis (Lens Aberration and Physical Lens) |
+| Falloff | how the lens modes grow from the optical centre: 1 – evenly, higher – a clean centre and strong corners. The fringe at the frame corner stays the same |
+| Anamorphic | 0 – round lens; 1 – horizontal fringes only, as with an anamorphic lens; −1 – vertical only |
+| Highlight Boost | stops of light restored to clipped highlights before the optics, so fringes glow out of them instead of tinting the white; 0 – off. For SDR and display-referred footage: HDR and scene-linear sources already carry their highlights |
+| Fringe Saturation | strength of the fringe colour, independent of its width: 0 – no colour, 100 % – natural, 200 % – vivid |
 | Fringe Blur | softens the colour of the fringes, px; luminance and image detail stay sharp. At values close to the fringe width the colour turns grey. Not available in Physical Lens, where Axial Color is the defocus |
 | Mix | blend with the original |
 | Use GPU | render on the GPU when the host provides one; off – on the CPU |
 | Color Space | encoding of the input (see below), the last parameter in the list |
+
+Highlight Boost on an SDR source: the synthetic frame saved as 8-bit, so the sky is clipped at white
+(`chromatron_cli sdr.ppm out.ppm --mode phys --lateral-color 4 --axial 8`). Without the boost a fringe can only dim
+the white next to it, and the sky turns yellow-green along the branches; with it the white stays clean and the
+branches take the purple fringe of a real lens.
+
+| Highlight Boost 0 | Highlight Boost 1, `--highlights 1` |
+|---|---|
+| ![](docs/examples/highlight-off.png) | ![](docs/examples/highlight-boost.png) |
+
+Falloff on the bars from the frame centre (left) to the edge (right), `--mode abr --lateral 30`:
+
+| Falloff 1 | Falloff 3, `--falloff 3` |
+|---|---|
+| ![](docs/examples/falloff-1.png) | ![](docs/examples/falloff-3.png) |
+
+Anamorphic and Fringe Saturation, `--mode abr --lateral 24` (compare with the Lens Aberration example above):
+
+| Anamorphic 1, `--anamorphic 1` | Fringe Saturation 50 %, `--saturation 0.5` | Fringe Saturation 200 %, `--saturation 2` |
+|---|---|---|
+| ![](docs/examples/anamorphic.png) | ![](docs/examples/saturation-low.png) | ![](docs/examples/saturation-high.png) |
 
 Each group ends with a **Reset** button that sets the group's parameters back to their defaults (Mode, Use GPU and
 Color Space are not touched).
@@ -157,8 +182,9 @@ src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU throu
 tools/chromatron_cli.cpp          renders PPM/PFM through the same pipeline
 tests/test_core.cpp               model invariants and OpenCL ↔ CPU parity
 ```
-Passes per frame: import (colour decode) → 3 levels of Gaussian blur → (mask: luminance → local contrast →
-threshold → dilation) → spectral gather (magenta/green removal in Lens Aberration) → encode back.
+Passes per frame: import (colour decode, Highlight Boost expansion) → 3 levels of Gaussian blur → (mask: luminance →
+local contrast → threshold → dilation) → spectral gather (magenta/green removal in Lens Aberration, Fringe
+Saturation) → highlight compression and encode back.
 
 ## Building
 Requires CMake ≥ 3.20 and C++17.
@@ -211,7 +237,7 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
 
 ## Status
 * Kernels and the CPU and OpenCL backends are covered by tests (OpenCL matches the CPU, float and 16-bit float
-  frames, all three modes); CI runs them on Linux, Windows and macOS.
+  frames, all three modes with and without the look controls); CI runs them on Linux, Windows and macOS.
 * After Effects 2026 (Windows): rendering checked (CPU path, scripted renders).
 * Premiere Pro (Windows): CPU rendering and the GPU filter checked.
 * DaVinci Resolve (Windows): checked. The macOS and Linux bundles build and pass the tests in CI; they have not

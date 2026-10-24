@@ -54,14 +54,14 @@ public:
     void import(const CKParams& p, const void* src, void* work) override
     {
         parallelRows(p.srcHeight, [&](int y) {
-            for (int x = 0; x < p.srcWidth; ++x) ck_import(x, y, p, F(src), F(work));
+            for (int x = 0; x < p.srcWidth; ++x) ck_import(x, y, &p, F(src), F(work));
         });
     }
 
     void luma(const CKParams& p, const void* work, void* luma) override
     {
         parallelRows(p.srcHeight, [&](int y) {
-            for (int x = 0; x < p.srcWidth; ++x) ck_luma(x, y, p, F(work), F(luma));
+            for (int x = 0; x < p.srcWidth; ++x) ck_luma(x, y, &p, F(work), F(luma));
         });
     }
 
@@ -75,7 +75,7 @@ public:
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
         parallelRows(p.srcHeight, [&](int y) {
-            for (int x = 0; x < p.srcWidth; ++x) ck_contrast(x, y, p, F(luma), F(lumaBlur), F(mask));
+            for (int x = 0; x < p.srcWidth; ++x) ck_contrast(x, y, &p, F(luma), F(lumaBlur), F(mask));
         });
     }
 
@@ -83,7 +83,7 @@ public:
     {
         parallelRows(p.dstHeight, [&](int y) {
             for (int x = 0; x < p.dstWidth; ++x)
-                ck_gather(x, y, p, F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(mask), F(dst));
+                ck_gather(x, y, &p, F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(mask), F(dst));
         });
     }
 
