@@ -1,151 +1,182 @@
 # Chromatron
 
-Плагин хроматической аберрации «дорогой оптики» для **After Effects**, **Premiere Pro** и **OpenFX (DaVinci Resolve)**.
-CPU и GPU (CUDA, OpenCL, Metal) рендерят одним и тем же исходником ядер.
+Chromatic aberration plug-in for **After Effects**, **Premiere Pro** and **OpenFX (DaVinci Resolve)**.
+CPU and GPU (CUDA, OpenCL, Metal) render from the same kernel source.
 
 ![preview](docs/preview.png)
 
-## Режимы
+## Installation
+Download the files for your host from the [latest release](https://github.com/Velich2/Chromatron/releases/latest),
+close the host and copy them:
+
+| Host | File | Folder |
+|---|---|---|
+| After Effects, Premiere Pro (Windows) | `Chromatron.aex` | `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore` |
+| DaVinci Resolve (Windows) | `Chromatron.ofx.bundle` | `C:\Program Files\Common Files\OFX\Plugins` |
+| DaVinci Resolve (macOS) | `Chromatron.ofx.bundle` | `/Library/OFX/Plugins` |
+| DaVinci Resolve (Linux) | `Chromatron.ofx.bundle` | `/usr/OFX/Plugins` |
+
+The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
+published yet: it has to be built on a Mac with the After Effects SDK (see [Building](#building)).
+
+## Modes
 
 ### RGB Separation
-| Параметр | Что делает |
+| Parameter | What it does |
 |---|---|
-| Color Pair | Red/Cyan, Green/Magenta, Blue/Yellow, Red/Blue (зелёный на месте) |
-| Angle | направление, в котором расходятся группы каналов (в противоположные стороны) |
-| Distance | расстояние между группами, px |
-| Spread | 0 — жёсткий цифровой сдвиг, 1 — мягкий «призменный» размаз канала |
+| Color Pair | Red/Cyan, Green/Magenta, Blue/Yellow, Red/Blue (green stays in place) |
+| Angle | direction in which the two channel groups move apart (in opposite directions) |
+| Distance | distance between the groups, px |
+| Spread | 0 – hard digital offset, 1 – soft prism-like smear of each group |
 
 ### Lens Aberration
-Стилизованная латеральная хроматическая аберрация: спектр (400–700 нм) масштабируется вокруг оптического центра,
-эффект растёт к углам кадра.
+Stylised lateral chromatic aberration: the spectrum (400–700 nm) is magnified around the optical centre, so the
+effect grows towards the frame corners.
 
-| Параметр | Что делает |
+| Parameter | What it does |
 |---|---|
-| Lateral | разброс спектра в углу кадра, px; знак меняет стороны тёплой/холодной каймы |
-| Fringe Balance | −1 красно-оранжевый / циан · 0 оранжевый / тил · +1 золотой / лазурь |
+| Lateral | spread of the spectrum at the frame corner, px; the sign swaps the warm and cool sides |
+| Fringe Balance | −1 red-orange / cyan · 0 orange / teal · +1 golden / azure |
 
-**Без magenta, purple и грязного зелёного.** Дисперсия монотонна по спектру, а из хроматической части смещения
-удаляется компонента magenta↔green (с сохранением яркости). Каймы лежат только на тёплой/холодной оси, заданной
-Fringe Balance – в том числе на тонких линиях, где обычный спектральный сдвиг даёт розовый/зелёный. Это проверяется
-тестом для всех значений Balance и для ACES.
+**No magenta, purple or muddy green.** Dispersion is monotonic along the spectrum, and the magenta↔green component
+is removed from the chromatic part of the displacement (luminance preserved). Fringes stay on the warm/cool axis set
+by Fringe Balance, thin lines included, where a plain spectral shift turns pink or green. Tests check this for every
+Balance value and for ACES.
 
 ### Physical Lens
-Модель по физике стекла, без стилизации: показатель преломления по формуле Коши (n − n₀ ∝ 1/λ²), фокальный сдвиг
-каждой длины волны для выбранной коррекции объектива, спектр по функциям цветового соответствия CIE 1931.
-Латеральный цвет (разное увеличение длин волн) растёт к углам, осевой (продольный) расфокусирует все длины волн,
-кроме сфокусированной, одинаково по всему кадру – отсюда пурпурный ореол светосильных объективов. Пурпурные и
-зелёные каймы здесь не вычищаются: у реальной оптики они бывают.
+A model that follows the glass instead of a style: refractive index by Cauchy's equation (n − n₀ ∝ 1/λ²), a focal
+shift per wavelength for the chosen lens correction, and the spectrum weighted by the CIE 1931 colour matching
+functions. Lateral colour (each wavelength magnified differently) grows towards the corners; axial (longitudinal)
+colour defocuses every wavelength but the focused one, equally over the whole frame – the purple halo of fast
+lenses. Magenta and green fringes are not removed here: real glass shows them.
 
-| Параметр | Что делает |
+| Parameter | What it does |
 |---|---|
-| Correction | Singlet – некорригированная линза; Achromat – линии F и C (486 / 656 нм) в одном фокусе, остаётся вторичный спектр (пурпурный / зелёный); Apochromat – в одном фокусе ещё и линия d (588 нм) |
-| Lateral Color | разброс спектра в углу кадра, px (для выбранной коррекции – её остаточный спектр) |
-| Axial Color | расфокус самой далёкой от фокуса длины волны, px, по всему кадру |
-| Focus Wavelength | длина волны в идеальном фокусе, нм (550 – зелёный, как у большинства объективов) |
+| Correction | Singlet – uncorrected lens; Achromat – the F and C lines (486 / 656 nm) share a focus, the secondary spectrum (purple / green) remains; Apochromat – the d line (588 nm) shares it too |
+| Lateral Color | spread of the spectrum at the frame corner, px (for a corrected lens: its residual spectrum) |
+| Axial Color | defocus of the wavelength farthest from focus, px, over the whole frame |
+| Focus Wavelength | wavelength in perfect focus, nm (550 – green, like most lenses) |
 
-### Общие
-**Edge Mask** – для всех режимов:
+### Common
+**Edge Mask** – every mode:
 
-| Параметр | Что делает |
+| Parameter | What it does |
 |---|---|
-| Contrast Threshold | 0 – везде; выше – только на всё более контрастных переходах света (на 1.0 – HDR-источники) |
-| Threshold Softness | мягкость порога |
-| Show Mask | где появляются каймы, в ч/б: чёрный – пиксель не меняется, белый – сильная кайма. Учтены порог, Mix и рост эффекта к углам кадра |
+| Contrast Threshold | 0 – everywhere; higher – only on increasingly strong light transitions (1.0 – HDR sources) |
+| Threshold Softness | softness of the threshold |
+| Show Mask | where fringes appear, in black and white: black – pixel unchanged, white – strong fringe. Includes the threshold, Mix and the growth towards the frame corners |
 
 **Optics:**
 
-| Параметр | Что делает |
+| Parameter | What it does |
 |---|---|
-| Optical Center | оптическая ось (Lens Aberration и Physical Lens) |
-| Fringe Blur | смягчает цвет кайм, px; яркость и детали изображения остаются резкими. Если значение сравнимо с шириной каймы, цвет уходит в серый. В Physical Lens недоступен: там размытие задаёт Axial Color |
-| Mix | смешивание с оригиналом |
-| Use GPU | рендер на GPU, если хост его даёт; выключено – на CPU |
-| Color Space | кодировка входа (см. ниже), последний параметр в списке |
+| Optical Center | optical axis (Lens Aberration and Physical Lens) |
+| Fringe Blur | softens the colour of the fringes, px; luminance and image detail stay sharp. At values close to the fringe width the colour turns grey. Not available in Physical Lens, where Axial Color is the defocus |
+| Mix | blend with the original |
+| Use GPU | render on the GPU when the host provides one; off – on the CPU |
+| Color Space | encoding of the input (see below), the last parameter in the list |
 
-В конце каждой группы есть кнопка **Reset**: она возвращает параметры этой группы к исходным значениям
-(Mode, Use GPU и Color Space не трогает).
+Each group ends with a **Reset** button that sets the group's parameters back to their defaults (Mode, Use GPU and
+Color Space are not touched).
 
-Число спектральных отсчётов подбирается автоматически: от 12 и больше, если соседние длины волн расходятся
-сильнее чем на 1,25 px; оставшиеся промежутки сглаживаются, поэтому полос в каймах не бывает.
+The number of spectral samples is automatic: 12 or more when neighbouring wavelengths would sit more than 1.25 px
+apart; the remaining gaps are smoothed, so fringes never show banding.
 
-## Цвет и ACES
-Оптика всегда считается в **линейном свете**. Параметр *Color Space*:
+## Examples
+Rendered with `chromatron_cli` from its synthetic test frame (1920×1080, top-right area where the lens modes are
+strongest). Each command reproduces the image: `chromatron_cli --synthetic 1920x1080 out.ppm <options>`.
 
-| Значение | Обработка |
+| | |
 |---|---|
-| **Auto** (по умолчанию; в AE и в программах без упорядочивания списков — последний пункт) | Resolve/OFX: пространство, которое программа сообщает для клипа (OpenFX colour management), иначе *Rec.709 Gamma 2.4*. After Effects: 32 бит → *Linear*, 8/16 бит → *sRGB* |
-| Linear (Rec.709 primaries) | как есть |
-| sRGB / Rec.709 Gamma 2.4 (BT.1886) | декод → линейный Rec.709 → обратно (BT.1886 с нулевым чёрным = степень 2.4) |
-| Rec.709 (Scene) | обратная камерная кривая BT.709 → линейный Rec.709 → обратно |
-| ACEScg | линейный AP1 |
-| ACEScct / ACEScc | декод → ACEScg (AP1) → обратно |
-| ACES2065-1 (AP0) | AP0 → AP1 → обратно |
-| DaVinci Wide Gamut / Intermediate | декод Intermediate → DWG → ACEScg (AP1) → обратно |
-| DaVinci Wide Gamut (linear) | DWG → AP1 → обратно |
+| ![](docs/examples/original.png)<br>Original | ![](docs/examples/separation.png)<br>RGB Separation – `--mode sep --pair rb --distance 12 --angle 45` |
+| ![](docs/examples/separation-fringe-blur.png)<br>RGB Separation + Fringe Blur – `... --blur 4` | ![](docs/examples/aberration.png)<br>Lens Aberration – `--mode abr --lateral 24` |
+| ![](docs/examples/aberration-balance.png)<br>Lens Aberration, Fringe Balance +1 – `... --balance 1` | ![](docs/examples/physical-singlet.png)<br>Physical Lens, Singlet – `--mode phys --lateral-color 20 --axial 6` |
+| ![](docs/examples/physical-achromat.png)<br>Physical Lens, Achromat – `... --correction achromat` | ![](docs/examples/physical-apochromat.png)<br>Physical Lens, Apochromat – `... --correction apo` |
 
-Широкие гаммы (ACES, DaVinci Wide Gamut) обрабатываются в AP1 с его коэффициентами яркости; оси кайм переносятся
-из Rec.709 в AP1 — оттенки одинаковы в любом пайплайне. Матрица DWG↔AP1 выведена из первичных цветов DWG
-(Bradford D65→D60, тем же способом получается эталонная Rec.709→AP1).
-Ручной выбор нужен, только если Auto ошибся. Точная кривая почти не важна: кадр декодируется и кодируется обратно
-той же кривой, поэтому неточность влияет лишь на то, насколько линейно считается оптика, а не на цвета картинки;
-неизвестные программе пространства Auto относит к своему семейству (линейное / гамма / лог).
-В Resolve: проект ACES → *ACEScct*; DaVinci YRGB Color Managed с широкой гаммой (timeline DaVinci Wide Gamut /
-Intermediate) → *DaVinci Wide Gamut / Intermediate*; DaVinci YRGB без управления цветом → *Rec.709 Gamma 2.4*
-(по умолчанию); таймлайн или клип в «Rec.709 (Scene)» → *Rec.709 (Scene)*.
-В After Effects: 8/16 бит без линеаризации → *sRGB*, линеаризованный 32 бит → *Linear*, OCIO/ACES → *ACEScg*.
+Edge Mask on the whole frame (`--mode abr --lateral 24`):
 
-## Как устроено
+| Contrast Threshold 0 | Contrast Threshold 0.6 | Show Mask |
+|---|---|---|
+| ![](docs/examples/mask-off.png) | ![](docs/examples/mask-threshold.png) | ![](docs/examples/mask-show.png) |
+
+## Colour and ACES
+The optics always run on **linear light**. The *Color Space* parameter:
+
+| Value | Processing |
+|---|---|
+| **Auto** (default; the last item in AE and in hosts that do not reorder lists) | Resolve/OFX: the colour space the host reports for the clip (OpenFX colour management), otherwise *Rec.709 Gamma 2.4*. After Effects: 32 bpc → *Linear*, 8/16 bpc → *sRGB*. Premiere Pro: *Rec.709 Gamma 2.4* |
+| Linear (Rec.709 primaries) | as is |
+| sRGB / Rec.709 Gamma 2.4 (BT.1886) | decode → linear Rec.709 → back (BT.1886 with zero black = power 2.4) |
+| Rec.709 (Scene) | inverse BT.709 camera curve → linear Rec.709 → back |
+| ACEScg | linear AP1 |
+| ACEScct / ACEScc | decode → ACEScg (AP1) → back |
+| ACES2065-1 (AP0) | AP0 → AP1 → back |
+| DaVinci Wide Gamut / Intermediate | decode Intermediate → DWG → ACEScg (AP1) → back |
+| DaVinci Wide Gamut (linear) | DWG → AP1 → back |
+
+Wide gamuts (ACES, DaVinci Wide Gamut) are processed in AP1 with its luminance weights; the fringe axes are carried
+from Rec.709 to AP1, so the hues are the same in any pipeline. The DWG↔AP1 matrix is derived from the DWG primaries
+(Bradford D65→D60, the same way that yields the reference Rec.709→AP1).
+A manual choice is only needed if Auto got it wrong. The exact curve hardly matters: the frame is decoded and
+encoded back with the same curve, so an inaccuracy only changes how linear the optics are, not the colours of the
+picture; colour spaces Auto does not know are put into their family (linear / gamma / log).
+In Resolve: ACES project → *ACEScct*; DaVinci YRGB Color Managed with a wide gamut (DaVinci Wide Gamut /
+Intermediate timeline) → *DaVinci Wide Gamut / Intermediate*; DaVinci YRGB without colour management →
+*Rec.709 Gamma 2.4* (default); timeline or clip in "Rec.709 (Scene)" → *Rec.709 (Scene)*.
+In After Effects: 8/16 bpc without linearisation → *sRGB*, linearised 32 bpc → *Linear*, OCIO/ACES → *ACEScg*.
+
+## How it works
 ```
-src/kernels/ChromatronKernels.h   ядра одним исходником: C++ / CUDA / OpenCL C / Metal
-src/core/                         модель: настройки → спектральные отсчёты, пирамида размытия, маска; конвейер проходов
+src/kernels/ChromatronKernels.h   single-source kernels: C++ / CUDA / OpenCL C / Metal
+src/core/                         model: settings → spectral taps, blur pyramid, mask; pass sequence
 src/backends/                     CPU (std::thread), CUDA (stream), OpenCL (cl_mem), Metal (MTLBuffer)
-src/ofx/                          OpenFX-плагин (Resolve): CPU/CUDA/OpenCL/Metal по выбору хоста
-src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU через PF_Cmd_SMART_RENDER_GPU;
-                                  Premiere Pro: PF_Cmd_RENDER (BGRA 8u/32f на CPU) и GPU-фильтр xGPUFilterEntry
-tools/chromatron_cli.cpp          рендер PPM/PFM тем же конвейером
-tests/test_core.cpp               инварианты модели и паритет OpenCL ↔ CPU
+src/ofx/                          OpenFX plug-in (Resolve): CPU/CUDA/OpenCL/Metal as the host chooses
+src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU through PF_Cmd_SMART_RENDER_GPU;
+                                  Premiere Pro: PF_Cmd_RENDER (BGRA 8u/32f on the CPU) and the xGPUFilterEntry GPU filter
+tools/chromatron_cli.cpp          renders PPM/PFM through the same pipeline
+tests/test_core.cpp               model invariants and OpenCL ↔ CPU parity
 ```
-Проходы кадра: импорт (декод цвета) → 3 уровня гауссова размытия → (маска: яркость → локальный контраст →
-порог → дилатация) → спектральный сбор с отсечением magenta/green → кодирование обратно.
+Passes per frame: import (colour decode) → 3 levels of Gaussian blur → (mask: luminance → local contrast →
+threshold → dilation) → spectral gather (magenta/green removal in Lens Aberration) → encode back.
 
-## Сборка
-Нужны CMake ≥ 3.20 и C++17.
+## Building
+Requires CMake ≥ 3.20 and C++17.
 
 **Resolve / OFX** (Windows, macOS, Linux):
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-cmake --install build      # Chromatron.ofx.bundle → папка OFX-плагинов
+cmake --install build      # Chromatron.ofx.bundle → OFX plug-in folder
 ```
-OpenFX SDK скачивается автоматически (тег `OFX_Release_1.5.1`) или задаётся `-DOFX_SDK_DIR=...`.
-CUDA собирается, если найден CUDA Toolkit (Windows/Linux); OpenCL — если найден OpenCL SDK; Metal — на macOS.
+The OpenFX SDK is downloaded automatically (tag `OFX_Release_1.5.1`) or set with `-DOFX_SDK_DIR=...`.
+CUDA is built when the CUDA Toolkit is found (Windows/Linux); OpenCL when an OpenCL SDK is found; Metal on macOS.
 
-**Windows одной командой** — `build_windows.bat` (нужны Visual Studio 2022 или 2026 с *Desktop development with C++*,
-Git, по желанию CUDA Toolkit). Скрипт сам находит Visual Studio и папку After Effects SDK
-(по умолчанию `C:\Users\Velich\AfterEffectsSDK_26.5_win`, переопределяется переменной `AE_SDK_ROOT`),
-а также Premiere Pro SDK для GPU-рендера в Premiere (по умолчанию `C:\Users\Velich\Premiere_Pro_24.0_C++_Win_SDK`,
-переменная `PR_SDK_ROOT`; без него Premiere считает эффект на CPU),
-собирает AE и OFX в Release, запускает тесты и сразу устанавливает плагины: `Chromatron.aex` в
-`C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore`, `Chromatron.ofx.bundle` в
-`C:\Program Files\Common Files\OFX\Plugins`. Запускать из консоли от администратора, при закрытых After Effects и Resolve:
+**Windows in one command** – `build_windows.bat` (needs Visual Studio 2022 or 2026 with *Desktop development with
+C++*, Git, optionally the CUDA Toolkit). The script finds Visual Studio and the After Effects SDK
+(default `C:\Users\Velich\AfterEffectsSDK_26.5_win`, override with `AE_SDK_ROOT`), and the Premiere Pro SDK for GPU
+rendering in Premiere (default `C:\Users\Velich\Premiere_Pro_24.0_C++_Win_SDK`, override with `PR_SDK_ROOT`;
+without it Premiere renders the effect on the CPU). It builds AE and OFX in Release, runs the tests and installs
+the plug-ins: `Chromatron.aex` into `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore`, `Chromatron.ofx.bundle`
+into `C:\Program Files\Common Files\OFX\Plugins`. Run it from an administrator console with After Effects,
+Premiere and Resolve closed:
 ```
-build_windows.bat              :: сборка + тесты + установка
-build_windows.bat noinstall    :: только сборка и тесты
+build_windows.bat              :: build + tests + install
+build_windows.bat noinstall    :: build and tests only
 ```
 
-**After Effects** (Windows, macOS) — нужен After Effects SDK от Adobe (не распространяется):
+**After Effects** (Windows, macOS) – needs the After Effects SDK from Adobe (not redistributable):
 ```
 cmake -S . -B build -DCHROMATRON_BUILD_AE=ON -DAE_SDK_DIR=/path/to/AfterEffectsSDK
 cmake --build build --config Release
 ```
-Результат: `build/AfterEffects/Chromatron.aex` (Windows) или `Chromatron.plugin` (macOS).
-GPU в AE: CUDA и OpenCL (Windows), Metal (macOS). Если AE выбрал DirectX, эффект рендерится на CPU.
+Output: `build/AfterEffects/Chromatron.aex` (Windows) or `Chromatron.plugin` (macOS).
+GPU in AE: CUDA and OpenCL (Windows), Metal (macOS). If AE uses DirectX, the effect renders on the CPU.
 
-**Premiere Pro** загружает тот же `.aex`. С `-DPR_SDK_DIR=/path/to/Premiere_Pro_SDK` в модуль добавляется
-GPU-фильтр Premiere (Mercury: CUDA, OpenCL с кадрами 32f и 16f, Metal). Без Premiere SDK, при ускорении
-через DirectX или в режиме Software Only эффект рендерится на CPU через `PF_Cmd_RENDER`.
+**Premiere Pro** loads the same `.aex`. With `-DPR_SDK_DIR=/path/to/Premiere_Pro_SDK` the module also gets the
+Premiere GPU filter (Mercury: CUDA, OpenCL with 32f and 16f frames, Metal). Without the Premiere SDK, with DirectX
+acceleration or in Software Only mode the effect renders on the CPU through `PF_Cmd_RENDER`.
 
-**Проверка:**
+**Check:**
 ```
 ctest --test-dir build
 build/chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 8 --blur 2 --threshold 0.5
@@ -153,12 +184,14 @@ build/chromatron_cli --synthetic 1920x1080 out.ppm --mode phys --correction achr
 ```
 
 ## CI
-GitHub Actions (`.github/workflows/build.yml`) на каждый PR собирает и тестирует проект на Linux (CPU + OpenCL на
-pocl), Windows (CPU + CUDA + OpenCL) и macOS (CPU + Metal, universal). Готовые OFX-бандлы для каждой платформы
-лежат в артефактах запуска. After Effects в CI не собирается: SDK Adobe нельзя выкладывать в репозиторий.
+GitHub Actions (`.github/workflows/build.yml`) builds and tests every PR on Linux (CPU + OpenCL on pocl), Windows
+(CPU + CUDA + OpenCL) and macOS (CPU + Metal, universal). The OFX bundles for each platform are in the run
+artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the repository.
 
-## Статус проверки
-* Ядра, CPU-бэкенд, OpenCL-бэкенд (на pocl) — собраны и протестированы, OpenCL совпадает с CPU.
-* OFX-модуль собирается на Linux, экспортирует точки входа и регистрирует плагин.
-* CUDA-ядра компилируются в PTX; Metal-исходник проверен синтаксически. На реальных GPU, в Resolve и
-  в After Effects ещё не запускалось — AE-часть написана по SDK, но без SDK под рукой не компилировалась.
+## Status
+* Kernels and the CPU and OpenCL backends are covered by tests (OpenCL matches the CPU, float and 16-bit float
+  frames, all three modes); CI runs them on Linux, Windows and macOS.
+* After Effects 2026 (Windows): rendering checked (CPU path, scripted renders).
+* Premiere Pro (Windows): CPU rendering and the GPU filter checked.
+* DaVinci Resolve: the OFX bundle builds and passes the tests on all three platforms; it has not been checked inside
+  Resolve yet.

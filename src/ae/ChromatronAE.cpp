@@ -28,7 +28,7 @@ using namespace chromatron::ae;
 
 namespace {
 
-// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 0, 0, PF_Stage_DEVELOP, 1) = 524289.
+// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 0, 0, PF_Stage_RELEASE, 1) = 525825.
 constexpr int kMajor = 1, kMinor = 0, kBug = 0, kBuild = 1;
 
 // Stable disk IDs: never renumber, only append.
@@ -133,7 +133,7 @@ PF_Err About(PF_InData*, PF_OutData* out)
 
 PF_Err GlobalSetup(PF_InData* in, PF_OutData* out)
 {
-    out->my_version = PF_VERSION(kMajor, kMinor, kBug, PF_Stage_DEVELOP, kBuild);
+    out->my_version = PF_VERSION(kMajor, kMinor, kBug, PF_Stage_RELEASE, kBuild);
     // Keep in sync with AE_Effect_Global_OutFlags / _2 in the PiPL.
     out->out_flags = PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_SEND_UPDATE_PARAMS_UI;
     out->out_flags2 = PF_OutFlag2_FLOAT_COLOR_AWARE | PF_OutFlag2_SUPPORTS_SMART_RENDER |

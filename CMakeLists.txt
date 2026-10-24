@@ -84,8 +84,14 @@ if(CHROMATRON_WITH_CUDA)
     if(CMAKE_CUDA_COMPILER)
         # Must be set before enable_language(), which otherwise picks the compiler's default.
         if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-            # Pascal .. Ada/Hopper, plus PTX for newer GPUs.
-            set(CMAKE_CUDA_ARCHITECTURES "61-real;70-real;75-real;80-real;86-real;89-real;90")
+            execute_process(COMMAND "${CMAKE_CUDA_COMPILER}" --version OUTPUT_VARIABLE NVCC_VERSION_TEXT)
+            if(NVCC_VERSION_TEXT MATCHES "release ([0-9]+)\\." AND CMAKE_MATCH_1 GREATER_EQUAL 13)
+                # CUDA 13 dropped Pascal and Volta: Turing .. Blackwell, plus PTX for newer GPUs.
+                set(CMAKE_CUDA_ARCHITECTURES "75-real;80-real;86-real;89-real;90-real;100-real;120")
+            else()
+                # Pascal .. Ada/Hopper, plus PTX for newer GPUs.
+                set(CMAKE_CUDA_ARCHITECTURES "61-real;70-real;75-real;80-real;86-real;89-real;90")
+            endif()
         endif()
         enable_language(CUDA)
         target_sources(chromatron_core PRIVATE src/backends/CudaBackend.cu)

@@ -14,8 +14,9 @@
 #define kPluginName "Chromatron"
 #define kPluginGrouping "Chromatron"
 #define kPluginDescription                                                                                  \
-    "Optical chromatic aberration. RGB Separation pushes a colour pair apart; Lens Aberration "            \
-    "emulates the residual lateral colour of high-end glass with clean warm/cool fringes."
+    "Optical chromatic aberration. RGB Separation pushes a colour pair apart; Lens Aberration adds "       \
+    "lateral colour with clean warm/cool fringes; Physical Lens models glass dispersion with lateral "     \
+    "and axial colour."
 #define kPluginIdentifier "com.chromatron.Chromatron"
 #define kPluginVersionMajor 1
 #define kPluginVersionMinor 0
