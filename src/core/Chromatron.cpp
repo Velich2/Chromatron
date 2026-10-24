@@ -263,6 +263,13 @@ bool colorSpaceFromName(const std::string& name, ColorSpace& out)
         {"ACEScc", ColorSpace::ACEScc},
         {"ACES2065-1", ColorSpace::ACES2065},
         {"aces_interchange", ColorSpace::ACES2065},
+        // ASWF ColorInterop identifiers
+        {"lin_ap0_scene", ColorSpace::ACES2065},
+        {"lin_ap1_scene", ColorSpace::ACEScg},
+        {"lin_rec709_scene", ColorSpace::LinearRec709},
+        {"srgb_rec709_scene", ColorSpace::SRGB},
+        {"srgb_rec709_display", ColorSpace::SRGB},
+        {"g24_rec709_display", ColorSpace::Rec709Gamma24},
         {"davinci_intermediate_widegamut", ColorSpace::DWGIntermediate},
         {"lin_davinci_widegamut", ColorSpace::DWGLinear},
         {"lin_rec709_srgb", ColorSpace::LinearRec709},
@@ -292,6 +299,10 @@ bool colorSpaceFromName(const std::string& name, ColorSpace& out)
     if (has("log") || has("cct") || has("intermediate") || has("bmdfilm") || has("adx") || has("pq") ||
         has("hlg") || has("st2084") || has("hdr")) {
         out = ColorSpace::ACEScct;
+        return true;
+    }
+    if (has("ap0")) {  // linear AP0 needs the AP0 -> AP1 matrix, not just AP1 coefficients
+        out = ColorSpace::ACES2065;
         return true;
     }
     if (has("lin")) {

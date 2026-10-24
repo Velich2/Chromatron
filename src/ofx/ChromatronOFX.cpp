@@ -27,6 +27,7 @@ namespace cx = chromatron;
 
 const char* const kMode = "mode";
 const char* const kSpace = "colorSpace";
+const int kSpaceAuto = 10;  // Color Space option index of Auto (after the ten fixed encodings)
 const char* const kPair = "colorPair";
 const char* const kAngle = "angle";
 const char* const kDistance = "distance";
@@ -90,7 +91,7 @@ private:
         mode_->getValueAtTime(t, v);
         s.mode = v == 0 ? cx::Mode::Separation : cx::Mode::Aberration;
         space_->getValueAtTime(t, v);
-        s.space = v == 0 ? hostColorSpace() : (cx::ColorSpace)(v - 1);
+        s.space = v == kSpaceAuto ? hostColorSpace() : (cx::ColorSpace)v;
         pair_->getValueAtTime(t, v);
         s.pair = (cx::ColorPair)v;
         s.angleDeg = angle_->getValueAtTime(t);
@@ -390,18 +391,14 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                    "ACES inputs are processed "
                    "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
                    "DaVinci Wide Gamut / Intermediate.");
-    space->appendOption("Auto");
-    space->appendOption("Linear (Rec.709 primaries)");
-    space->appendOption("sRGB");
-    space->appendOption("Rec.709 Gamma 2.4 (BT.1886)");
-    space->appendOption("ACEScg");
-    space->appendOption("ACEScct");
-    space->appendOption("ACEScc");
-    space->appendOption("ACES2065-1 (AP0)");
-    space->appendOption("DaVinci Wide Gamut / Intermediate");
-    space->appendOption("DaVinci Wide Gamut (linear)");
-    space->appendOption("Rec.709 (Scene)");
-    space->setDefault(0);
+    // Option indices are stored in projects: existing entries keep their index and Auto is
+    // appended. Hosts with OpenFX 1.5 choice ordering still list Auto first.
+    const char* const kSpaces[] = {"Linear (Rec.709 primaries)", "sRGB", "Rec.709 Gamma 2.4 (BT.1886)", "ACEScg",
+                                   "ACEScct", "ACEScc", "ACES2065-1 (AP0)", "DaVinci Wide Gamut / Intermediate",
+                                   "DaVinci Wide Gamut (linear)", "Rec.709 (Scene)"};
+    for (int i = 0; i < kSpaceAuto; ++i) space->appendOption(kSpaces[i], "", i + 1);
+    space->appendOption("Auto", "", 0);
+    space->setDefault(kSpaceAuto);
     space->setAnimates(false);
     page->addChild(*space);
 }

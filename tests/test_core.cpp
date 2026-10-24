@@ -438,6 +438,10 @@ void testColorSpaceNames()
         {"slog3_sgamut3cine", true, ColorSpace::ACEScct},
         {"lin_arri_wide_gamut_4", true, ColorSpace::ACEScg},
         {"rec2100_pq_display", true, ColorSpace::ACEScct},
+        {"lin_ap0_scene", true, ColorSpace::ACES2065},
+        {"lin_ap1_scene", true, ColorSpace::ACEScg},
+        {"srgb_rec709_scene", true, ColorSpace::SRGB},
+        {"g24_rec709_display", true, ColorSpace::Rec709Gamma24},
         {"ofx_raw", false, ColorSpace::LinearRec709},
         {"", false, ColorSpace::LinearRec709},
     };
