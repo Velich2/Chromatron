@@ -20,6 +20,12 @@ The effect appears in the **Chromatron** category. The After Effects / Premiere 
 published yet: it has to be built on a Mac with the After Effects SDK (see [Building](#building)).
 
 ## Modes
+The examples are rendered with `chromatron_cli` from its synthetic test frame (1920×1080); each caption gives the
+options: `chromatron_cli --synthetic 1920x1080 out.ppm <options>`.
+
+| Original: bars (lens modes are strongest in this corner) | Original: point lights |
+|---|---|
+| ![](docs/examples/original.png) | ![](docs/examples/lights-original.png) |
 
 ### RGB Separation
 | Parameter | What it does |
@@ -29,6 +35,10 @@ published yet: it has to be built on a Mac with the After Effects SDK (see [Buil
 | Distance | distance between the groups, px |
 | Spread | 0 – hard digital offset, 1 – soft prism-like smear of each group |
 
+| `--mode sep --pair rb --distance 12 --angle 45` | the same with Fringe Blur, `--blur 4` |
+|---|---|
+| ![](docs/examples/separation.png) | ![](docs/examples/separation-fringe-blur.png) |
+
 ### Lens Aberration
 Stylised lateral chromatic aberration: the spectrum (400–700 nm) is magnified around the optical centre, so the
 effect grows towards the frame corners.
@@ -37,6 +47,10 @@ effect grows towards the frame corners.
 |---|---|
 | Lateral | spread of the spectrum at the frame corner, px; the sign swaps the warm and cool sides |
 | Fringe Balance | −1 red-orange / cyan · 0 orange / teal · +1 golden / azure |
+
+| `--mode abr --lateral 24` | Fringe Balance +1, `--balance 1` |
+|---|---|
+| ![](docs/examples/aberration.png) | ![](docs/examples/aberration-balance.png) |
 
 **No magenta, purple or muddy green.** Dispersion is monotonic along the spectrum, and the magenta↔green component
 is removed from the chromatic part of the displacement (luminance preserved). Fringes stay on the warm/cool axis set
@@ -57,6 +71,24 @@ lenses. Magenta and green fringes are not removed here: real glass shows them.
 | Axial Color | defocus of the wavelength farthest from focus, px, over the whole frame |
 | Focus Wavelength | wavelength in perfect focus, nm (550 – green, like most lenses) |
 
+Lateral colour on the bars, then the three corrections with lateral and axial colour together
+(`--lateral-color 20 --axial 6`). A singlet splits the spectrum blue against yellow; the secondary spectrum of an
+achromat and an apochromat puts purple on one side of an edge and yellow-green on the other.
+
+| Lateral Color only, `--mode phys --lateral-color 20 --axial 0` | Singlet, `--mode phys --lateral-color 20 --axial 6` |
+|---|---|
+| ![](docs/examples/physical-lateral.png) | ![](docs/examples/physical-singlet.png) |
+| **Achromat**, `... --correction achromat` | **Apochromat**, `... --correction apo` |
+| ![](docs/examples/physical-achromat.png) | ![](docs/examples/physical-apochromat.png) |
+
+Axial colour on point lights (`--mode phys --lateral-color 0 --axial 10`): the colour of the halo is the part of
+the spectrum that is out of focus. Focused on green, red and blue blur into a purple halo; focused on blue, the
+halo is orange; focused on red, it is blue.
+
+| Focus 550 nm (default) | Focus 450 nm, `--focus 450` | Focus 650 nm, `--focus 650` |
+|---|---|---|
+| ![](docs/examples/physical-axial-singlet.png) | ![](docs/examples/physical-focus-450.png) | ![](docs/examples/physical-focus-650.png) |
+
 ### Common
 **Edge Mask** – every mode:
 
@@ -65,6 +97,12 @@ lenses. Magenta and green fringes are not removed here: real glass shows them.
 | Contrast Threshold | 0 – everywhere; higher – only on increasingly strong light transitions (1.0 – HDR sources) |
 | Threshold Softness | softness of the threshold |
 | Show Mask | where fringes appear, in black and white: black – pixel unchanged, white – strong fringe. Includes the threshold, Mix and the growth towards the frame corners |
+
+Whole frame, `--mode abr --lateral 24`:
+
+| Contrast Threshold 0 | Contrast Threshold 0.6, `--threshold 0.6` | Show Mask, `--threshold 0.6 --show-mask` |
+|---|---|---|
+| ![](docs/examples/mask-off.png) | ![](docs/examples/mask-threshold.png) | ![](docs/examples/mask-show.png) |
 
 **Optics:**
 
@@ -81,23 +119,6 @@ Color Space are not touched).
 
 The number of spectral samples is automatic: 12 or more when neighbouring wavelengths would sit more than 1.25 px
 apart; the remaining gaps are smoothed, so fringes never show banding.
-
-## Examples
-Rendered with `chromatron_cli` from its synthetic test frame (1920×1080, top-right area where the lens modes are
-strongest). Each command reproduces the image: `chromatron_cli --synthetic 1920x1080 out.ppm <options>`.
-
-| | |
-|---|---|
-| ![](docs/examples/original.png)<br>Original | ![](docs/examples/separation.png)<br>RGB Separation – `--mode sep --pair rb --distance 12 --angle 45` |
-| ![](docs/examples/separation-fringe-blur.png)<br>RGB Separation + Fringe Blur – `... --blur 4` | ![](docs/examples/aberration.png)<br>Lens Aberration – `--mode abr --lateral 24` |
-| ![](docs/examples/aberration-balance.png)<br>Lens Aberration, Fringe Balance +1 – `... --balance 1` | ![](docs/examples/physical-singlet.png)<br>Physical Lens, Singlet – `--mode phys --lateral-color 20 --axial 6` |
-| ![](docs/examples/physical-achromat.png)<br>Physical Lens, Achromat – `... --correction achromat` | ![](docs/examples/physical-apochromat.png)<br>Physical Lens, Apochromat – `... --correction apo` |
-
-Edge Mask on the whole frame (`--mode abr --lateral 24`):
-
-| Contrast Threshold 0 | Contrast Threshold 0.6 | Show Mask |
-|---|---|---|
-| ![](docs/examples/mask-off.png) | ![](docs/examples/mask-threshold.png) | ![](docs/examples/mask-show.png) |
 
 ## Colour and ACES
 The optics always run on **linear light**. The *Color Space* parameter:
@@ -193,5 +214,5 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
   frames, all three modes); CI runs them on Linux, Windows and macOS.
 * After Effects 2026 (Windows): rendering checked (CPU path, scripted renders).
 * Premiere Pro (Windows): CPU rendering and the GPU filter checked.
-* DaVinci Resolve: the OFX bundle builds and passes the tests on all three platforms; it has not been checked inside
-  Resolve yet.
+* DaVinci Resolve (Windows): checked. The macOS and Linux bundles build and pass the tests in CI; they have not
+  been checked inside Resolve on those systems yet.
