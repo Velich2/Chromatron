@@ -20,6 +20,7 @@
 #include "core/Chromatron.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -250,6 +251,63 @@ void setupFringeCleaning(CKParams& p, double balance, bool ap1)
 int blurRadius(float sigma) { return sigma < 0.05f ? 0 : std::min(2048, (int)std::ceil(3.0f * sigma)); }
 
 }  // namespace
+
+bool colorSpaceFromName(const std::string& name, ColorSpace& out)
+{
+    static const struct {
+        const char* name;
+        ColorSpace space;
+    } kExact[] = {
+        {"ACEScg", ColorSpace::ACEScg},
+        {"ACEScct", ColorSpace::ACEScct},
+        {"ACEScc", ColorSpace::ACEScc},
+        {"ACES2065-1", ColorSpace::ACES2065},
+        {"aces_interchange", ColorSpace::ACES2065},
+        {"davinci_intermediate_widegamut", ColorSpace::DWGIntermediate},
+        {"lin_davinci_widegamut", ColorSpace::DWGLinear},
+        {"lin_rec709_srgb", ColorSpace::LinearRec709},
+        {"ofx_scene_linear", ColorSpace::LinearRec709},
+        {"scene_linear", ColorSpace::LinearRec709},
+        {"srgb_tx", ColorSpace::SRGB},
+        {"srgb_display", ColorSpace::SRGB},
+        {"g24_rec709_tx", ColorSpace::Rec709Gamma24},
+        {"rec1886_rec709_display", ColorSpace::Rec709Gamma24},
+        {"ofx_display_sdr", ColorSpace::Rec709Gamma24},
+        {"camera_rec709", ColorSpace::Rec709Scene},
+        {"ofx_scene_log", ColorSpace::ACEScct},
+        {"compositing_log", ColorSpace::ACEScct},
+    };
+    for (const auto& e : kExact)
+        if (name == e.name) {
+            out = e.space;
+            return true;
+        }
+
+    std::string n = name;
+    for (char& c : n) c = (char)std::tolower((unsigned char)c);
+    auto has = [&](const char* s) { return n.find(s) != std::string::npos; };
+    if (n.empty() || has("raw") || has("data") || has("xyz")) return false;
+    // Families: camera logs and HDR curves behave like a log encoding, wide linear
+    // gamuts like ACEScg, display transfers like sRGB / gamma 2.4.
+    if (has("log") || has("cct") || has("intermediate") || has("bmdfilm") || has("adx") || has("pq") ||
+        has("hlg") || has("st2084") || has("hdr")) {
+        out = ColorSpace::ACEScct;
+        return true;
+    }
+    if (has("lin")) {
+        out = has("709") || has("srgb") ? ColorSpace::LinearRec709 : ColorSpace::ACEScg;
+        return true;
+    }
+    if (has("srgb") || has("g22") || has("p3")) {
+        out = ColorSpace::SRGB;
+        return true;
+    }
+    if (has("709") || has("1886") || has("g24") || has("gamma") || has("display") || has("2020")) {
+        out = ColorSpace::Rec709Gamma24;
+        return true;
+    }
+    return false;
+}
 
 bool isIdentity(const Settings& s)
 {

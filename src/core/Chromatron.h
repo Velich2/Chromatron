@@ -4,6 +4,8 @@
 
 #include "core/Backend.h"
 
+#include <string>
+
 namespace chromatron {
 
 enum class Mode { Separation = 0, Aberration = 1 };
@@ -82,6 +84,13 @@ struct Plan {
 };
 
 Plan buildPlan(const Settings& s, const Geometry& g);
+
+// Maps a colour space name reported by a host (OpenFX native config / OCIO, e.g. "ACEScct",
+// "lin_rec709_srgb", "davinci_intermediate_widegamut") to the closest supported encoding.
+// Encodings outside the list fall back to their family (linear / display gamma / log): the
+// image is decoded and re-encoded with the same curve, so only the linearity of the optics
+// is approximate, never the round trip. Returns false for unknown or non-colour data.
+bool colorSpaceFromName(const std::string& name, ColorSpace& out);
 
 // True when the effect leaves the image untouched (host may pass the source through).
 bool isIdentity(const Settings& s);

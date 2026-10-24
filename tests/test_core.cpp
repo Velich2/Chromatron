@@ -415,6 +415,44 @@ void testPremultipliedEdge(bool premultiplied)
     expect(worst < 1e-4f && softest < 0.1f, what);
 }
 
+// Auto colour space: host-reported names map to the right encoding or at least its family.
+void testColorSpaceNames()
+{
+    struct Case {
+        const char* name;
+        bool known;
+        ColorSpace space;
+    } cases[] = {
+        {"ACEScct", true, ColorSpace::ACEScct},
+        {"ACEScg", true, ColorSpace::ACEScg},
+        {"ACES2065-1", true, ColorSpace::ACES2065},
+        {"davinci_intermediate_widegamut", true, ColorSpace::DWGIntermediate},
+        {"lin_davinci_widegamut", true, ColorSpace::DWGLinear},
+        {"lin_rec709_srgb", true, ColorSpace::LinearRec709},
+        {"srgb_tx", true, ColorSpace::SRGB},
+        {"g24_rec709_tx", true, ColorSpace::Rec709Gamma24},
+        {"rec1886_rec709_display", true, ColorSpace::Rec709Gamma24},
+        {"camera_rec709", true, ColorSpace::Rec709Scene},
+        {"ofx_scene_log", true, ColorSpace::ACEScct},
+        {"arri_logc4", true, ColorSpace::ACEScct},
+        {"slog3_sgamut3cine", true, ColorSpace::ACEScct},
+        {"lin_arri_wide_gamut_4", true, ColorSpace::ACEScg},
+        {"rec2100_pq_display", true, ColorSpace::ACEScct},
+        {"ofx_raw", false, ColorSpace::LinearRec709},
+        {"", false, ColorSpace::LinearRec709},
+    };
+    bool ok = true;
+    for (const Case& c : cases) {
+        ColorSpace cs = ColorSpace::LinearRec709;
+        const bool known = colorSpaceFromName(c.name, cs);
+        if (known != c.known || (known && cs != c.space)) {
+            std::printf("  mismatch for '%s'\n", c.name);
+            ok = false;
+        }
+    }
+    expect(ok, "host colour space names map to the right encoding");
+}
+
 // Lateral far larger than the frame must not reach the 1 / (1 + t * k) pole.
 void testRadialPole()
 {
@@ -540,6 +578,7 @@ int main()
     testDaVinciWideGamut();
     testPremultipliedEdge(true);
     testRadialPole();
+    testColorSpaceNames();
 #if CHROMATRON_HAS_OPENCL
     testOpenCL();
 #endif

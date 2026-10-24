@@ -4,6 +4,7 @@
 #include "core/Chromatron.h"
 
 #include "ofxsImageEffect.h"
+#include "ofxColour.h"
 
 #include <cmath>
 #include <memory>
@@ -89,7 +90,7 @@ private:
         mode_->getValueAtTime(t, v);
         s.mode = v == 0 ? cx::Mode::Separation : cx::Mode::Aberration;
         space_->getValueAtTime(t, v);
-        s.space = (cx::ColorSpace)v;
+        s.space = v == 0 ? hostColorSpace() : (cx::ColorSpace)(v - 1);
         pair_->getValueAtTime(t, v);
         s.pair = (cx::ColorPair)v;
         s.angleDeg = angle_->getValueAtTime(t);
@@ -104,6 +105,20 @@ private:
         s.samples = samples_->getValueAtTime(t);
         s.mix = mix_->getValueAtTime(t);
         return s;
+    }
+
+    // Auto: the source clip's colour space as reported through OpenFX colour management.
+    // Hosts without it (or reporting nothing usable) get Rec.709 Gamma 2.4, Resolve's default
+    // timeline encoding.
+    cx::ColorSpace hostColorSpace() const
+    {
+        const std::string style = getPropertySet().propGetString(kOfxImageEffectPropColourManagementStyle, 0, false);
+        if (!style.empty() && style != kOfxImageEffectColourManagementNone) {
+            const std::string name = src_->getPropertySet().propGetString(kOfxImageClipPropColourspace, 0, false);
+            cx::ColorSpace cs;
+            if (cx::colorSpaceFromName(name, cs)) return cs;
+        }
+        return cx::ColorSpace::Rec709Gamma24;
     }
 
     void updateEnabled()
@@ -263,6 +278,12 @@ void ChromatronFactory::describe(ImageEffectDescriptor& desc)
     desc.setTemporalClipAccess(false);
     desc.setRenderTwiceAlways(false);
     desc.setSupportsMultipleClipPARs(false);
+    // Ask hosts with OpenFX colour management to report each clip's colour space (used by Auto).
+    // Hosts without it ignore these properties.
+    desc.getPropertySet().propSetString(kOfxImageEffectPropColourManagementStyle,
+                                        kOfxImageEffectColourManagementCore, false);
+    desc.getPropertySet().propSetString(kOfxImageEffectPropColourManagementAvailableConfigs,
+                                        "ofx-native-v1.5_aces-v1.3_ocio-v2.3", false);
 #if CHROMATRON_HAS_OPENCL
     desc.setSupportsOpenCLBuffersRender(true);
 #endif
@@ -364,9 +385,12 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
 
     ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
     space->setLabels("Color Space", "Color Space", "Color Space");
-    space->setHint("Encoding of the timeline / clip. The optics run on linear light; ACES inputs are processed "
+    space->setHint("Encoding of the timeline / clip. Auto uses the colour space the host reports for the clip "
+                   "(OpenFX colour management) and falls back to Rec.709 Gamma 2.4. The optics run on linear light; "
+                   "ACES inputs are processed "
                    "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
                    "DaVinci Wide Gamut / Intermediate.");
+    space->appendOption("Auto");
     space->appendOption("Linear (Rec.709 primaries)");
     space->appendOption("sRGB");
     space->appendOption("Rec.709 Gamma 2.4 (BT.1886)");
@@ -377,7 +401,7 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     space->appendOption("DaVinci Wide Gamut / Intermediate");
     space->appendOption("DaVinci Wide Gamut (linear)");
     space->appendOption("Rec.709 (Scene)");
-    space->setDefault((int)cx::ColorSpace::Rec709Gamma24);
+    space->setDefault(0);
     space->setAnimates(false);
     page->addChild(*space);
 }
