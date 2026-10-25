@@ -19,7 +19,7 @@
     "and axial colour."
 #define kPluginIdentifier "com.chromatron.Chromatron"
 #define kPluginVersionMajor 1
-#define kPluginVersionMinor 1
+#define kPluginVersionMinor 2
 
 namespace {
 
