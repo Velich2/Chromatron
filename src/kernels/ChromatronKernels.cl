@@ -22,6 +22,13 @@ __kernel void k_blur(const CKBlurParams b, __global const float* src, __global f
     if (x < b.width && y < b.height) ck_blur(x, y, b, src, dst);
 }
 
+__kernel void k_downsample(const CKBlurParams b, __global const float* src, __global float* dst)
+{
+    const int x = get_global_id(0);
+    const int y = get_global_id(1);
+    if (x < b.width && y < b.height) ck_downsample(x, y, b, src, dst);
+}
+
 __kernel void k_contrast(__constant CKParams* p, __global const float* luma, __global const float* lumaBlur,
                          __global float* mask)
 {
@@ -31,10 +38,11 @@ __kernel void k_contrast(__constant CKParams* p, __global const float* luma, __g
 }
 
 __kernel void k_gather(__constant CKParams* p, __global const float* L0, __global const float* L1,
-                       __global const float* L2, __global const float* L3, __global const float* mask,
-                       __global float* dst)
+                       __global const float* L2, __global const float* L3, __global const float* L4,
+                       __global const float* L5, __global const float* L6, __global const float* L7,
+                       __global const float* mask, __global float* dst)
 {
     const int x = get_global_id(0);
     const int y = get_global_id(1);
-    if (x < p->dstWidth && y < p->dstHeight) ck_gather(x, y, p, L0, L1, L2, L3, mask, dst);
+    if (x < p->dstWidth && y < p->dstHeight) ck_gather(x, y, p, L0, L1, L2, L3, L4, L5, L6, L7, mask, dst);
 }

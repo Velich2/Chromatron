@@ -103,6 +103,8 @@ void withLook(Settings& s)
     s.falloff = 2.5;
     s.anamorphic = 0.5;
     s.fringeSaturation = 1.6;
+    s.channelBlur = 12.0;  // deep enough for downsampled blur levels
+    s.axialColor = 20.0;
 }
 
 Settings aberration()
@@ -518,6 +520,81 @@ void testFringeBlur()
     expect(lumDiff < 1e-4f && chromaSoft < 0.6f * chromaSharp, what);
 }
 
+// Blur of tap i of a physical-lens plan, px (axial colour, the same over the frame).
+double tapAxialSigma(const Plan& plan, int i)
+{
+    return plan.params.tapSigmaAxial[i];
+}
+
+// Axial colour on a thin line: each channel must be the sum of the taps' Gaussians, which the
+// blur levels approximate (blurs between two levels are interpolated).
+void testDefocusProfile()
+{
+    const int w = 512, h = 4;
+    const Frame f = makeFrame(w, h, [&](int x, int, float* p) {
+        p[0] = p[1] = p[2] = x == w / 2 ? 1.0f : 0.0f;
+        p[3] = 1.0f;
+    });
+    for (double axial : {4.0, 16.0, 60.0}) {
+        Settings s;
+        s.mode = Mode::Physical;
+        s.space = ColorSpace::LinearRec709;
+        s.lateralColor = 0.0;
+        s.axialColor = axial;
+        const Geometry g = fullGeometry(w, h);
+        const Plan plan = buildPlan(s, g);
+        const std::vector<float> out = runCpu(s, g, f.px);
+        double worst = 0.0, peak = 0.0;
+        for (int c = 0; c < 3; ++c) {
+            std::vector<double> ref(w, 0.0);
+            for (int i = 0; i < plan.params.numTaps; ++i) {
+                const double sigma = tapAxialSigma(plan, i);
+                std::vector<double> k(w);
+                double sum = 0.0;
+                for (int x = 0; x < w; ++x) {
+                    const double d = x - w / 2;
+                    k[x] = sigma < 1e-3 ? (d == 0.0 ? 1.0 : 0.0) : std::exp(-0.5 * d * d / (sigma * sigma));
+                    sum += k[x];
+                }
+                for (int x = 0; x < w; ++x) ref[x] += plan.params.tapW[i * 3 + c] * k[x] / sum;
+            }
+            for (int x = 0; x < w; ++x) {
+                worst = std::fmax(worst, std::fabs(out[((size_t)2 * w + x) * 4 + c] - ref[x]));
+                peak = std::fmax(peak, ref[x]);
+            }
+        }
+        char what[128];
+        std::snprintf(what, sizeof(what), "axial colour %.0f px: defocus matches the taps' Gaussians (error %.1f%% of peak)",
+                      axial, 100.0 * worst / peak);
+        expect(worst < 0.08 * peak, what);
+    }
+}
+
+// Fringe Blur softens the fringes only: without displacement there is nothing to soften, so
+// coloured areas keep their edges (a tiny Distance must not bleed colour over the frame).
+void testFringeBlurOnlyFringes()
+{
+    const Frame f = makeFrame(96, 48, [](int x, int y, float* p) {
+        const int cell = (x / 12 + y / 12) % 3;
+        p[0] = cell == 0 ? 0.8f : 0.05f;
+        p[1] = cell == 1 ? 0.7f : 0.05f;
+        p[2] = cell == 2 ? 0.9f : 0.05f;
+        p[3] = 1.0f;
+    });
+    Settings s;
+    s.mode = Mode::Separation;
+    s.space = ColorSpace::LinearRec709;
+    s.distance = 0.02;
+    s.spread = 0.0;
+    const Geometry g = fullGeometry(f.w, f.h);
+    const std::vector<float> sharp = runCpu(s, g, f.px);
+    s.channelBlur = 8.0;
+    const float d = maxDiff(sharp, runCpu(s, g, f.px));
+    char what[128];
+    std::snprintf(what, sizeof(what), "fringe blur leaves colour edges alone without fringes (%.2g)", d);
+    expect(d < 0.03f, what);  // the 0.02 px fringe itself, softened; colour bleed used to reach 0.8
+}
+
 // The physical lens shows what real glass does: an achromat's secondary spectrum puts
 // green on one side of an edge and magenta on the other; the axial colour of a singlet
 // focused on green leaves a purple halo (red and blue defocused) even at the optical centre.
@@ -614,7 +691,7 @@ Geometry halfGeometry(int w, int h)
 {
     Geometry g = fullGeometry(w, h);
     g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
-    g.hostHalf = true;
+    g.hostFormat = CK_HOST_HALF;
     return g;
 }
 
@@ -851,6 +928,43 @@ void testCuda()
 }
 #endif
 
+// 8 bpc and After Effects 16 bpc buffers are read and written by the kernels directly: the same
+// picture as the float path, to the precision of the format.
+void testIntegerHosts()
+{
+    const Frame f = neutralChart(64, 48);
+    Settings s = aberration();
+    s.space = ColorSpace::SRGB;
+    for (int format : {CK_HOST_U8, CK_HOST_AE16}) {
+        const float scale = format == CK_HOST_U8 ? 255.0f : 32768.0f;
+        std::vector<uint16_t> in16(f.px.size()), out16(f.px.size(), 0);
+        std::vector<uint8_t> in8(f.px.size()), out8(f.px.size(), 0);
+        std::vector<float> in(f.px.size());
+        for (size_t i = 0; i < f.px.size(); ++i) {
+            const float q = std::round(std::fmin(1.0f, std::fmax(0.0f, f.px[i])) * scale);
+            in16[i] = (uint16_t)q;
+            in8[i] = (uint8_t)q;
+            in[i] = q / scale;
+        }
+        Geometry g = fullGeometry(f.w, f.h);
+        const std::vector<float> ref = runCpu(s, g, in);
+        g.hostFormat = format;
+        auto be = makeCpuBackend();
+        if (format == CK_HOST_U8) render(*be, buildPlan(s, g), in8.data(), out8.data());
+        else render(*be, buildPlan(s, g), in16.data(), out16.data());
+        float worst = 0.0f;
+        for (size_t i = 0; i < ref.size(); ++i) {
+            const float want = std::round(std::fmin(1.0f, std::fmax(0.0f, ref[i])) * scale);
+            const float got = format == CK_HOST_U8 ? out8[i] : out16[i];
+            worst = std::fmax(worst, std::fabs(got - want));
+        }
+        char what[96];
+        std::snprintf(what, sizeof(what), "%s host buffers match the float render (%.0f steps)",
+                      format == CK_HOST_U8 ? "8-bit" : "AE 16-bit", worst);
+        expect(worst <= 1.0f, what);
+    }
+}
+
 #if CHROMATRON_HAS_OPENCL
 void testOpenCL()
 {
@@ -966,7 +1080,10 @@ int main()
     testPremultipliedEdge(true);
     testRadialPole();
     testHalfHost();
+    testIntegerHosts();
     testFringeBlur();
+    testFringeBlurOnlyFringes();
+    testDefocusProfile();
     testPhysical();
     testSeparationMask();
     testColorSpaceNames();
