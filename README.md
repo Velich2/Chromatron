@@ -19,6 +19,12 @@ close the host and copy them:
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
 published yet: it has to be built on a Mac with the After Effects SDK (see [Building](#building)).
 
+### Updates
+The installed version and a **Check for Updates** button are in the effect's **Options** button next to the effect
+name in After Effects (**Setup** in Premiere Pro) and in the **About Chromatron** button at the top of the panel in
+Resolve. The check asks GitHub for the latest release only when you press the button and offers to open the download
+page when a newer version exists; nothing is installed automatically and nothing else is sent.
+
 GPU rendering with CUDA needs an NVIDIA GPU from the Turing generation (GTX 16xx, RTX 20xx) or newer and
 driver R580 or newer. On older NVIDIA GPUs or drivers the effect renders on the CPU automatically; OpenCL and
 Metal have no such limit.

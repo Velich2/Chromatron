@@ -54,12 +54,23 @@ add_custom_target(chromatron_kernel_sources DEPENDS ${GENERATED_DIR}/ChromatronK
 # Core: model, pipeline and backends.
 # ---------------------------------------------------------------------------
 add_library(chromatron_core STATIC
+    src/core/About.cpp
     src/core/Chromatron.cpp
     src/backends/CpuBackend.cpp)
 add_dependencies(chromatron_core chromatron_kernel_sources)
 target_include_directories(chromatron_core PUBLIC src PRIVATE ${GENERATED_DIR})
+target_compile_definitions(chromatron_core PRIVATE CHROMATRON_VERSION_STRING="${PROJECT_VERSION}")
 find_package(Threads REQUIRED)
 target_link_libraries(chromatron_core PUBLIC Threads::Threads)
+
+# About dialog and update check.
+if(APPLE)
+    target_sources(chromatron_core PRIVATE src/core/AboutApple.mm)
+    set_source_files_properties(src/core/AboutApple.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(chromatron_core PUBLIC "-framework AppKit" "-framework Foundation")
+elseif(WIN32)
+    target_link_libraries(chromatron_core PUBLIC winhttp shell32 user32)
+endif()
 
 if(CHROMATRON_WITH_OPENCL)
     find_package(OpenCL)

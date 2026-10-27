@@ -1,6 +1,7 @@
 // Chromatron - OpenFX plug-in (DaVinci Resolve and other OFX hosts).
 // CPU, CUDA, OpenCL (buffers) and Metal rendering through the shared pipeline.
 
+#include "core/About.h"
 #include "core/Chromatron.h"
 
 #include "ofxsImageEffect.h"
@@ -26,6 +27,7 @@ namespace {
 using namespace OFX;
 namespace cx = chromatron;
 
+const char* const kAbout = "about";
 const char* const kMode = "mode";
 const char* const kSpace = "colorSpace";
 const int kSpaceAuto = 10;  // Color Space option index of Auto (after the ten fixed encodings)
@@ -101,6 +103,7 @@ public:
     void changedParam(const InstanceChangedArgs&, const std::string& name) override
     {
         if (name == kMode) updateEnabled();
+        else if (name == kAbout) about();
         else if (name == kResetSeparation) reset("Reset RGB Separation", pair_, angle_, distance_, spread_);
         else if (name == kResetAberration) reset("Reset Lens Aberration", lateral_, balance_);
         else if (name == kResetPhysical) reset("Reset Physical Lens", correction_, lateralColor_, axialColor_, focus_);
@@ -109,6 +112,19 @@ public:
     }
 
 private:
+    // Version and update check; where there is no native dialog (Linux) the host's messages ask.
+    void about()
+    {
+        cx::showAboutDialog([this](const std::string& message, const char* button1, const char* button2) {
+            if (!button2) {
+                sendMessage(Message::eMessageMessage, "", message);
+                return 1;
+            }
+            const std::string question = message + "\n\nYes: " + button1 + "    No: " + button2;
+            return sendMessage(Message::eMessageQuestion, "", question) == Message::eMessageReplyYes ? 1 : 2;
+        });
+    }
+
     // A group's Reset button: its parameters back to their defaults, as one undo step.
     template <class... P>
     void reset(const char* label, P*... params)
@@ -385,6 +401,12 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     dst->setSupportsTiles(false);
 
     PageParamDescriptor* page = desc.definePageParam("Controls");
+
+    const std::string aboutLabel = std::string("About Chromatron ") + cx::version();
+    PushButtonParamDescriptor* about = desc.definePushButtonParam(kAbout);
+    about->setLabels(aboutLabel, aboutLabel, aboutLabel);
+    about->setHint("Installed version and a check for updates on GitHub.");
+    page->addChild(*about);
 
     ChoiceParamDescriptor* mode = desc.defineChoiceParam(kMode);
     mode->setLabels("Mode", "Mode", "Mode");
