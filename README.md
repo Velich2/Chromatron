@@ -246,6 +246,15 @@ GitHub Actions (`.github/workflows/build.yml`) builds and tests every PR on Linu
 (CPU + CUDA + OpenCL) and macOS (CPU + Metal, universal). The OFX bundles for each platform are in the run
 artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the repository.
 
+### Releasing
+1. Set the version in `CMakeLists.txt` (`project(... VERSION x.y.z)`), `kMajor` / `kMinor` / `kBug` in
+   `src/ae/ChromatronAE.cpp` and `AE_Effect_Version` in `src/ae/ChromatronAE_PiPL.r`, and merge it.
+2. Run the **Release** workflow (Actions → Release → Run workflow, version `x.y.z`) or push a tag `vx.y.z`. It
+   builds and tests the OFX plug-ins and creates a draft release with `Chromatron-x.y.z-OFX-<platform>.zip`.
+3. Build the After Effects / Premiere plug-in with `build_windows.bat`, add `Chromatron.aex` to the draft as
+   `Chromatron-x.y.z-AE-Premiere-Windows.zip`, write the release notes and publish. The **Check for Updates**
+   button finds the release once it is published.
+
 ## Status
 * Kernels and the CPU and OpenCL backends are covered by tests (OpenCL matches the CPU, float and 16-bit float
   frames, all three modes with and without the look controls); CI runs them on Linux, Windows and macOS.

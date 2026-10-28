@@ -1,0 +1,64 @@
+name: Release
+
+# Builds the OFX plug-ins and creates a draft GitHub release with them. The After Effects /
+# Premiere build needs the Adobe SDK, so its zip is added to the draft by hand before publishing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.2.1 (must match the CMake project version)'
+        required: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Draft release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="${INPUT_VERSION#v}"; fi
+          project=$(sed -n 's/^project(Chromatron VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ "$version" != "$project" ]; then
+            echo "::error::Release $version does not match the CMake project version $project"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Package
+        run: |
+          mkdir dist
+          for platform in Linux Windows macOS; do
+            stage="stage-$platform/Chromatron.ofx.bundle"
+            mkdir -p "$stage"
+            cp -R "artifacts/Chromatron-OFX-$platform/." "$stage/"
+            # Artifacts do not keep file modes.
+            find "$stage" -name Chromatron.ofx -exec chmod 755 {} +
+            (cd "stage-$platform" && zip -qr "../dist/Chromatron-$VERSION-OFX-$platform.zip" Chromatron.ofx.bundle)
+          done
+          ls -l dist
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$VERSION"
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            # Publishing the draft creates the tag, which runs this workflow again: leave it alone.
+            if [ "$draft" = false ]; then echo "$tag is already published"; exit 0; fi
+            gh release upload "$tag" dist/*.zip --clobber
+          else
+            gh release create "$tag" dist/*.zip --draft --target "$GITHUB_SHA" --title "Chromatron $VERSION" \
+              --notes "Before publishing: add Chromatron-$VERSION-AE-Premiere-Windows.zip (build_windows.bat) and the release notes."
+          fi
