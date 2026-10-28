@@ -1,5 +1,6 @@
 // Chromatron - invariants of the optical model and backend parity.
 
+#include "core/About.h"
 #include "core/Chromatron.h"
 
 #if CHROMATRON_HAS_OPENCL
@@ -24,6 +25,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 #include <functional>
 #include <vector>
 
@@ -482,6 +484,20 @@ void testColorSpaceNames()
         }
     }
     expect(ok, "host colour space names map to the right encoding");
+}
+
+// Update check: the release tag is read from GitHub's reply and versions compare numerically.
+void testVersions()
+{
+    std::string v;
+    const bool parsed = parseReleaseVersion("{\"url\":\"x\",\"tag_name\": \"v1.10.0\",\"name\":\"Chromatron\"}", v);
+    expect(parsed && v == "1.10.0", "release tag parsed from the GitHub reply");
+    expect(!parseReleaseVersion("{\"message\":\"Not Found\"}", v), "reply without a release rejected");
+    expect(!parseReleaseVersion("{\"tag_name\":\"nightly\"}", v), "non-numeric tag rejected");
+    expect(compareVersions("1.10.0", "1.9.3") > 0 && compareVersions("1.2", "1.2.0") == 0 &&
+               compareVersions("1.2.0", "1.2.1") < 0 && compareVersions("2.0.0", "1.99.99") > 0,
+           "versions compare numerically");
+    expect(compareVersions(version(), "1.0.0") >= 0, "plug-in version comes from the build");
 }
 
 // Lateral far larger than the frame must not reach the 1 / (1 + t * k) pole.
@@ -1090,6 +1106,7 @@ int main()
     testHighlightBoost();
     testFalloffAnamorphic();
     testFringeSaturation();
+    testVersions();
 #if CHROMATRON_HAS_CUDA
     testCuda();
 #endif

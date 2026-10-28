@@ -43,9 +43,9 @@ resource 'PiPL' (16000) {
         AE_Effect_Info_Flags {
             0
         },
-        /* DEEP_COLOR_AWARE | SEND_UPDATE_PARAMS_UI */
+        /* DEEP_COLOR_AWARE | SEND_UPDATE_PARAMS_UI | I_DO_DIALOG */
         AE_Effect_Global_OutFlags {
-            0x06000000
+            0x06000020
         },
         /* SUPPORTS_SMART_RENDER | FLOAT_COLOR_AWARE | SUPPORTS_GPU_RENDER_F32 | SUPPORTS_THREADED_RENDERING */
         AE_Effect_Global_OutFlags_2 {

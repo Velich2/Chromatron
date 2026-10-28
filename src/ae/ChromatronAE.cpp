@@ -2,6 +2,7 @@
 // Premiere Pro loads the same plug-in but calls PF_Cmd_RENDER with BGRA frames, rendered on the CPU.
 
 #include "ChromatronParams.h"
+#include "core/About.h"
 
 #include "AEConfig.h"
 #include "entry.h"
@@ -130,8 +131,15 @@ void setMessage(PF_OutData* out, const char* text)
 PF_Err About(PF_InData*, PF_OutData* out)
 {
     std::snprintf(out->return_msg, sizeof(out->return_msg),
-                  "Chromatron %d.%d\rOptical chromatic aberration: RGB separation, lens aberration and a physical lens.", kMajor,
-                  kMinor);
+                  "Chromatron %s\rOptical chromatic aberration: RGB separation, lens aberration and a physical lens.",
+                  cx::version());
+    return PF_Err_NONE;
+}
+
+// The Options button next to the effect name: version and update check.
+PF_Err DoDialog()
+{
+    cx::showAboutDialog();
     return PF_Err_NONE;
 }
 
@@ -139,7 +147,7 @@ PF_Err GlobalSetup(PF_InData* in, PF_OutData* out)
 {
     out->my_version = PF_VERSION(kMajor, kMinor, kBug, PF_Stage_RELEASE, kBuild);
     // Keep in sync with AE_Effect_Global_OutFlags / _2 in the PiPL.
-    out->out_flags = PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_SEND_UPDATE_PARAMS_UI;
+    out->out_flags = PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_SEND_UPDATE_PARAMS_UI | PF_OutFlag_I_DO_DIALOG;
     out->out_flags2 = PF_OutFlag2_FLOAT_COLOR_AWARE | PF_OutFlag2_SUPPORTS_SMART_RENDER |
                       PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
     if (in->appl_id != kPremiere) {
@@ -634,6 +642,8 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutDat
         switch (cmd) {
         case PF_Cmd_ABOUT:
             return About(in_data, out_data);
+        case PF_Cmd_DO_DIALOG:
+            return DoDialog();
         case PF_Cmd_GLOBAL_SETUP:
             return GlobalSetup(in_data, out_data);
         case PF_Cmd_PARAMS_SETUP:

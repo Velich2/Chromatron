@@ -23,6 +23,12 @@ GPU rendering with CUDA needs an NVIDIA GPU from the Turing generation (GTX 16xx
 driver R580 or newer. On older NVIDIA GPUs or drivers the effect renders on the CPU automatically; OpenCL and
 Metal have no such limit.
 
+### Updates
+The installed version and a **Check for Updates** button are in the effect's **Options** button next to the effect
+name in After Effects (**Setup** in Premiere Pro) and in the **About Chromatron** button at the top of the panel in
+Resolve. The check asks GitHub for the latest release only when you press the button and offers to open the download
+page when a newer version exists; nothing is installed automatically and nothing else is sent.
+
 ## Modes
 The examples are rendered with `chromatron_cli` from its synthetic test frame (1920×1080); each caption gives the
 options: `chromatron_cli --synthetic 1920x1080 out.ppm <options>`.
