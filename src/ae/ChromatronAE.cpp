@@ -29,8 +29,8 @@ using namespace chromatron::ae;
 
 namespace {
 
-// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 2, 0, PF_Stage_RELEASE, 1) = 591361.
-constexpr int kMajor = 1, kMinor = 2, kBug = 0, kBuild = 1;
+// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 2, 1, PF_Stage_RELEASE, 1) = 593409.
+constexpr int kMajor = 1, kMinor = 2, kBug = 1, kBuild = 1;
 
 // Stable disk IDs: never renumber, only append.
 enum {
