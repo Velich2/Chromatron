@@ -12,18 +12,18 @@ on:
         required: true
 
 jobs:
-  build:
-    uses: ./.github/workflows/build.yml
-
-  release:
-    name: Draft release
-    needs: build
+  check:
+    name: Version
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      published: ${{ steps.published.outputs.published }}
     steps:
       - uses: actions/checkout@v4
       - name: Version
+        id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -33,7 +33,33 @@ jobs:
             echo "::error::Release $version does not match the CMake project version $project"
             exit 1
           fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Publishing the draft creates the tag, which runs this workflow again: skip the build then.
+      - name: Already published?
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          draft=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null || true)
+          if [ "$draft" = false ]; then echo "v$VERSION is already published"; fi
+          echo "published=$([ "$draft" = false ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.published != 'true'
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Draft release
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -55,8 +81,9 @@ jobs:
         run: |
           tag="v$VERSION"
           if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
-            # Publishing the draft creates the tag, which runs this workflow again: leave it alone.
             if [ "$draft" = false ]; then echo "$tag is already published"; exit 0; fi
+            # The zips are rebuilt from this commit: point the draft (the tag it creates) at it too.
+            gh release edit "$tag" --target "$GITHUB_SHA"
             gh release upload "$tag" dist/*.zip --clobber
           else
             gh release create "$tag" dist/*.zip --draft --target "$GITHUB_SHA" --title "Chromatron $VERSION" \

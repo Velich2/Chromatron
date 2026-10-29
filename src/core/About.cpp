@@ -5,6 +5,7 @@
 #include "core/AboutPlatform.h"
 
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -26,7 +27,10 @@ std::vector<long> versionParts(const std::string& v)
     while (i < v.size() && !std::isdigit((unsigned char)v[i])) ++i;  // "v1.2.0" -> "1.2.0"
     while (i < v.size() && std::isdigit((unsigned char)v[i])) {
         long n = 0;
-        while (i < v.size() && std::isdigit((unsigned char)v[i])) n = n * 10 + (v[i++] - '0');
+        while (i < v.size() && std::isdigit((unsigned char)v[i])) {
+            if (n < 100000000) n = n * 10 + (v[i] - '0');  // saturate instead of overflowing
+            ++i;
+        }
         parts.push_back(n);
         if (i < v.size() && v[i] == '.') ++i;
         else break;
@@ -206,8 +210,11 @@ bool httpsGet(const char* url, const char* userAgent, std::string& body, int& st
         return false;
     }
     DWORD code = 0, size = sizeof(code);
-    WinHttpQueryHeaders(request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
-                        &code, &size, WINHTTP_NO_HEADER_INDEX);
+    if (!WinHttpQueryHeaders(request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX)) {
+        error = lastError("reading the reply status");
+        return false;
+    }
     status = (int)code;
     body.clear();
     for (;;) {
@@ -296,13 +303,19 @@ bool httpsGet(const char* url, const char* userAgent, std::string& body, int& st
     size_t n;
     while ((n = fread(buffer, 1, sizeof(buffer), pipe)) > 0) out.append(buffer, n);
     const int rc = pclose(pipe);
+    // A host that ignores SIGCHLD makes pclose fail with ECHILD although curl ran: trust the output then.
+    const bool exited = rc == 0 || (rc == -1 && errno == ECHILD);
     const size_t nl = out.rfind('\n');
-    if (rc != 0 || nl == std::string::npos) {
+    if (!exited || nl == std::string::npos) {
         error = out.empty() ? "curl failed" : out.substr(0, out.find('\n'));
         return false;
     }
     status = std::atoi(out.c_str() + nl + 1);
     body = out.substr(0, nl);
+    if (status == 0) {  // no HTTP reply (only reachable when the exit status was lost): curl's message
+        error = body.empty() ? "curl failed" : body.substr(0, body.find('\n'));
+        return false;
+    }
     return true;
 }
 

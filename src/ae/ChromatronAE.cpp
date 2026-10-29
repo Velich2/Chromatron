@@ -31,6 +31,11 @@ namespace {
 
 // Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 2, 1, PF_Stage_RELEASE, 1) = 593409.
 constexpr int kMajor = 1, kMinor = 2, kBug = 1, kBuild = 1;
+#if defined(CHROMATRON_VERSION_MAJOR)
+static_assert(kMajor == CHROMATRON_VERSION_MAJOR && kMinor == CHROMATRON_VERSION_MINOR &&
+                  kBug == CHROMATRON_VERSION_PATCH,
+              "kMajor / kMinor / kBug must match the version in CMakeLists.txt");
+#endif
 
 // Stable disk IDs: never renumber, only append.
 enum {
