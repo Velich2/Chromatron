@@ -497,6 +497,7 @@ void testVersions()
     expect(compareVersions("1.10.0", "1.9.3") > 0 && compareVersions("1.2", "1.2.0") == 0 &&
                compareVersions("1.2.0", "1.2.1") < 0 && compareVersions("2.0.0", "1.99.99") > 0,
            "versions compare numerically");
+    expect(compareVersions("1.99999999999999999999", "1.2") > 0, "huge version components saturate");
     expect(compareVersions(version(), "1.0.0") >= 0, "plug-in version comes from the build");
 }
 

@@ -72,6 +72,10 @@ endif()
 
 target_include_directories(chromatron_ae PRIVATE ${AE_INCLUDES})
 target_link_libraries(chromatron_ae PRIVATE chromatron_core)
+# ChromatronAE.cpp checks kMajor / kMinor / kBug against the project version at compile time.
+target_compile_definitions(chromatron_ae PRIVATE CHROMATRON_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+                                                 CHROMATRON_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+                                                 CHROMATRON_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 # Premiere Pro GPU filter (xGPUFilterEntry in the same module). Optional: without the Premiere Pro
 # SDK the plug-in still works in Premiere, rendering on the CPU.
