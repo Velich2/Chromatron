@@ -354,7 +354,7 @@ GroupParamDescriptor* defineGroup(ImageEffectDescriptor& desc, const char* name,
 
 }  // namespace
 
-mDeclarePluginFactory(ChromatronFactory, {}, {});
+mDeclarePluginFactory(ChromatronFactory, {}, { cx::shutdownCpuPool(); });
 
 void ChromatronFactory::describe(ImageEffectDescriptor& desc)
 {

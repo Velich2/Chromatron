@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <functional>
+#include <future>
 #include <vector>
 
 using namespace chromatron;
@@ -320,6 +321,44 @@ void testTransfers()
                          ck_encode(CK_TRANSFER_REC709_SCENE, 0.0180540f)) < 1e-5f &&
                std::fabs(ck_decode(CK_TRANSFER_REC709_SCENE, 0.408848f) - 0.18f) < 1e-5f,
            "Rec.709 (Scene) matches reference values");
+}
+
+// Rec.709 Scene has Rec.709 primaries despite being appended after the ACES choices.
+void testWorkingPrimaries()
+{
+    Settings s = aberration();
+    const Geometry g = fullGeometry(64, 48);
+    s.space = ColorSpace::LinearRec709;
+    const CKParams ref = buildPlan(s, g).params;
+    s.space = ColorSpace::Rec709Scene;
+    const CKParams scene = buildPlan(s, g).params;
+    expect(scene.lumR == ref.lumR && scene.lumG == ref.lumG && scene.lumB == ref.lumB &&
+               scene.fringeAxisX == ref.fringeAxisX && scene.fringeDualY == ref.fringeDualY &&
+               scene.transfer == CK_TRANSFER_REC709_SCENE,
+           "Rec.709 Scene uses Rec.709 luminance and fringe cleaning");
+    s.space = ColorSpace::ACEScg;
+    const CKParams aces = buildPlan(s, g).params;
+    expect(std::fabs(aces.lumR - 0.2722287f) < 1e-6f, "ACES retains AP1 luminance");
+}
+
+// Host unload joins all workers; repeated unloads and rendering after reload are safe.
+void testCpuPoolLifecycle()
+{
+    const Frame f = neutralChart(96, 64);
+    const Geometry g = fullGeometry(f.w, f.h);
+    const Settings s = aberration();
+    const auto ref = runCpu(s, g, f.px);
+    bool ok = true;
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        std::vector<std::future<std::vector<float>>> renders;
+        for (int i = 0; i < 4; ++i)
+            renders.push_back(std::async(std::launch::async, [&] { return runCpu(s, g, f.px); }));
+        shutdownCpuPool();  // synchronises with passes already using the pool
+        for (auto& render : renders) ok = (maxDiff(ref, render.get()) == 0.0f) && ok;
+        shutdownCpuPool();
+        shutdownCpuPool();
+    }
+    expect(ok, "concurrent CPU renders survive shutdown and pool restart");
 }
 
 // The colour space must matter at the plug-in's default settings: fringes are mixed in
@@ -1091,6 +1130,8 @@ int main()
     testShowMask();
     testRegionAndOrder();
     testTransfers();
+    testWorkingPrimaries();
+    testCpuPoolLifecycle();
     testColorSpaceMatters();
     testAces();
     testDaVinciWideGamut();
@@ -1118,5 +1159,6 @@ int main()
     testMetal();
 #endif
     std::printf(failures ? "%d failure(s)\n" : "all passed\n", failures);
+    shutdownCpuPool();
     return failures ? 1 : 0;
 }
