@@ -276,7 +276,18 @@ const double kLumRec709[3] = {0.2126, 0.7152, 0.0722};
 const double kLumAP1[3] = {0.2722287168, 0.6740817658, 0.0536895174};
 
 // Wide-gamut inputs (ACES, DaVinci Wide Gamut) are processed in AP1.
-bool workInAP1(ColorSpace cs) { return cs >= ColorSpace::ACEScg; }
+bool workInAP1(ColorSpace cs)
+{
+    switch (cs) {
+    case ColorSpace::ACEScg:
+    case ColorSpace::ACEScct:
+    case ColorSpace::ACEScc:
+    case ColorSpace::ACES2065:
+    case ColorSpace::DWGIntermediate:
+    case ColorSpace::DWGLinear: return true;
+    default: return false;
+    }
+}
 
 void setMatrices(CKParams& p, const double* toWork, const double* fromWork)
 {

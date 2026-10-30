@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +11,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <system_error>
 #include <new>
 #include <thread>
 #include <vector>
@@ -20,10 +21,8 @@ namespace chromatron {
 
 namespace {
 
-// Worker threads shared by every render in the process. They are started on first use and stop
-// after a short idle time, so frames reuse them instead of creating threads for every pass, and
-// no thread outlives the plug-in long after the last render. Several frames rendering at once
-// (After Effects multi-frame rendering) share the same workers instead of each starting its own.
+// Joinable workers shared by renders in this module. Host unload callbacks stop the pool
+// before the library is unloaded. Shutdown waits for active passes; rendering may restart it.
 class Pool {
 public:
     struct Job {
@@ -51,12 +50,13 @@ public:
 
     static Pool& instance()
     {
-        static Pool* pool = new Pool;  // never destroyed: workers end on their own when idle
+        static Pool* pool = new Pool;  // shutdown is explicit, outside the Windows loader lock
         return *pool;
     }
 
     void run(int height, const std::function<void(int)>& row)
     {
+        std::shared_lock<std::shared_mutex> active(lifecycle_);
         const int threads = std::max(1, std::min((int)std::thread::hardware_concurrency(), height / 8));
         if (threads <= 1) {
             for (int y = 0; y < height; ++y) row(y);
@@ -67,9 +67,14 @@ public:
         job->height = height;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            jobs_.push_back(job);
             const int wanted = (int)std::thread::hardware_concurrency() - 1;
-            for (; workers_ < wanted; ++workers_) std::thread([this] { worker(); }).detach();
+            // The caller can finish the job even when the OS cannot create more workers.
+            workers_.reserve(std::max(0, wanted));
+            jobs_.push_back(job);
+            while ((int)workers_.size() < wanted) {
+                try { workers_.emplace_back([this] { worker(); }); }
+                catch (const std::system_error&) { break; }
+            }
         }
         wake_.notify_all();
         job->work();  // the calling thread works too
@@ -77,15 +82,27 @@ public:
         job->finished.wait(lock, [&] { return job->done.load() >= height; });
     }
 
+    void shutdown()
+    {
+        std::unique_lock<std::shared_mutex> inactive(lifecycle_);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        wake_.notify_all();
+        for (std::thread& worker : workers_) worker.join();
+        workers_.clear();
+        jobs_.clear();
+        stopping_ = false;
+    }
+
 private:
     void worker()
     {
         std::unique_lock<std::mutex> lock(mutex_);
         for (;;) {
-            if (!wake_.wait_for(lock, std::chrono::seconds(2), [&] { return !jobs_.empty(); })) {
-                --workers_;  // idle: leave
-                return;
-            }
+            wake_.wait(lock, [&] { return stopping_ || !jobs_.empty(); });
+            if (stopping_) return;
             std::shared_ptr<Job> job = jobs_.front();
             if (job->next.load() >= job->height) {  // every row is taken: retire the job
                 jobs_.pop_front();
@@ -100,7 +117,9 @@ private:
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::shared_ptr<Job>> jobs_;
-    int workers_ = 0;
+    std::vector<std::thread> workers_;
+    std::shared_mutex lifecycle_;
+    bool stopping_ = false;
 };
 
 template <class Fn>
@@ -176,5 +195,7 @@ public:
 }  // namespace
 
 std::unique_ptr<Backend> makeCpuBackend() { return std::make_unique<CpuBackend>(); }
+
+void shutdownCpuPool() { Pool::instance().shutdown(); }
 
 }  // namespace chromatron

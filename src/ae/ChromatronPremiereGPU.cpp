@@ -60,6 +60,12 @@ double numeric(const PrParam& p)
 
 class ChromatronGPU : public PrGPUFilterBase {
 public:
+    static prSuiteError Shutdown(piSuitesPtr suites, csSDK_int32 index)
+    {
+        cx::shutdownCpuPool();
+        return PrGPUFilterBase::Shutdown(suites, index);
+    }
+
     prSuiteError Initialize(PrGPUFilterInstance* ioInstanceData) override
     {
         PrGPUFilterBase::Initialize(ioInstanceData);

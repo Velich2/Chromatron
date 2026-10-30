@@ -45,6 +45,10 @@ public:
 
 std::unique_ptr<Backend> makeCpuBackend();
 
+// Call from the host's unload callback, before unloading the module (never from DllMain).
+// Waits for active CPU passes and joins workers. Idempotent; later renders restart the pool.
+void shutdownCpuPool();
+
 #if CHROMATRON_HAS_CUDA
 // stream: cudaStream_t, may be null (default stream).
 std::unique_ptr<Backend> makeCudaBackend(void* stream);

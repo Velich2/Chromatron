@@ -649,6 +649,9 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData* in_data, PF_OutDat
             return About(in_data, out_data);
         case PF_Cmd_DO_DIALOG:
             return DoDialog();
+        case PF_Cmd_GLOBAL_SETDOWN:
+            cx::shutdownCpuPool();
+            return PF_Err_NONE;
         case PF_Cmd_GLOBAL_SETUP:
             return GlobalSetup(in_data, out_data);
         case PF_Cmd_PARAMS_SETUP:

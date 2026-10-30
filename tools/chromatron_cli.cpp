@@ -256,6 +256,9 @@ void renderOpenCL(const Plan& plan, const Image& in, Image& out)
 
 int main(int argc, char** argv)
 {
+    struct CpuCleanup {
+        ~CpuCleanup() { shutdownCpuPool(); }
+    } cleanup;
     try {
         std::vector<std::string> pos;
         Settings s;
