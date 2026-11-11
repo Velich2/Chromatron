@@ -57,16 +57,20 @@ std::unique_ptr<Backend> makeCudaBackend(void* stream);
 // the toolkit or this build has no code for the GPU (CUDA 13 builds start at Turing). Hosts then
 // render on the CPU instead of failing every frame.
 bool cudaUsable();
+// For host-memory rendering on a private worker thread; owns its CUDA stream.
+std::unique_ptr<Backend> makePrivateCudaBackend();
 #endif
 
 #if CHROMATRON_HAS_OPENCL
 // queue: cl_command_queue owned by the host application.
 std::unique_ptr<Backend> makeOpenCLBackend(void* queue);
+std::unique_ptr<Backend> makePrivateOpenCLBackend();
 #endif
 
 #if CHROMATRON_HAS_METAL
 // queue: id<MTLCommandQueue> owned by the host application.
 std::unique_ptr<Backend> makeMetalBackend(void* queue);
+std::unique_ptr<Backend> makePrivateMetalBackend();
 #endif
 
 }  // namespace chromatron

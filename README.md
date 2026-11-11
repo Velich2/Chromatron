@@ -31,7 +31,8 @@ page when a newer version exists; nothing is installed automatically and nothing
 
 ## Nuke
 The same OFX bundle has a Nuke profile: scene-linear colour by default, an optical axis relative to
-project format, expanded bounding boxes and transparent-black input padding. It uses CPU rendering.
+project format, expanded bounding boxes and transparent-black input padding. Use GPU runs the kernels on a
+private CUDA/OpenCL/Metal queue, uploading Nuke's CPU buffers and downloading the result; CPU is the fallback.
 See [Nuke installation, colour setup and testing](docs/NUKE.md). Nuke is not installed on the development
 machine, so in-host compatibility remains unverified. Nuke Non-commercial cannot load third-party plug-ins.
 

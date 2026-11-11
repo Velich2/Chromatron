@@ -124,4 +124,10 @@ void render(Backend& backend, const Plan& plan, const void* src, void* dst);
 // host still hands over GPU memory). dst is read back first when the region does not cover it.
 void renderOnHost(Backend& device, const Plan& plan, const void* src, size_t srcBytes, void* dst, size_t dstBytes);
 
+// Render packed RGBA float host images using an owned GPU queue on a separate thread.
+// Both buffers must tightly cover their plan dimensions; destination base must be zero.
+// Returns false on unavailable/failed GPU backends so the caller can render on the CPU.
+// backendName reports the backend used, or diagnostic reasons on failure.
+bool renderOnPrivateGpu(const Plan& plan, const float* src, float* dst, std::string& backendName);
+
 }  // namespace chromatron

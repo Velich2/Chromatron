@@ -56,12 +56,21 @@ def main():
             for x in [47.5, 64.5, 80.5]:
                 for channel in ['red', 'green', 'blue', 'alpha']:
                     assert math.isfinite(effect.sample(channel, x, y)), (mode, channel)
+    # Compare both settings through the host; log cannot prove device use if the machine falls back.
+    pick(effect, 'mode', 'Physical Lens')
+    knob(effect, 'useGpu').setValue(False)
+    points = [(x, y, c) for x in [47.5, 64.5, 80.5] for y in [31.5, 48.5, 64.5]
+              for c in ['red', 'green', 'blue', 'alpha']]
+    reference = [effect.sample(c, x, y) for x, y, c in points]
+    knob(effect, 'useGpu').setValue(True)
+    accelerated = [effect.sample(c, x, y) for x, y, c in points]
+    assert max(abs(a-b) for a,b in zip(reference, accelerated)) < 3e-3, 'GPU/CPU mismatch'
     # Recreate a node to check the host's class registration and object teardown as well.
     nuke.delete(effect)
     effect = nuke.createNode(cls, inpanel=False)
     effect.setInput(0, crop)
     assert math.isfinite(effect.sample('red', 60.5, 48.5))
-    print('PASS: HDR, identity, expanded bbox, black edges, all modes, node recreation')
+    print('PASS: HDR, identity, expanded bbox, black edges, all modes, GPU/CPU parity, node recreation')
 
 
 if __name__ == '__main__':

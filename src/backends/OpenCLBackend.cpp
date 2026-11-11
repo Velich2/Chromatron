@@ -58,7 +58,7 @@ cl_program programFor(cl_context ctx, cl_device_id device)
 
 class OpenCLBackend final : public Backend {
 public:
-    explicit OpenCLBackend(cl_command_queue queue) : queue_(queue)
+    explicit OpenCLBackend(cl_command_queue queue, bool owned = false) : queue_(queue), owned_(owned)
     {
         check(clGetCommandQueueInfo(queue, CL_QUEUE_CONTEXT, sizeof(ctx_), &ctx_, nullptr), "CL_QUEUE_CONTEXT");
         check(clGetCommandQueueInfo(queue, CL_QUEUE_DEVICE, sizeof(device_), &device_, nullptr), "CL_QUEUE_DEVICE");
@@ -76,6 +76,10 @@ public:
         for (cl_kernel k : kernels_)
             if (k) clReleaseKernel(k);
         if (params_) clReleaseMemObject(params_);
+        if (owned_) {
+            clFinish(queue_);
+            clReleaseCommandQueue(queue_);
+        }
     }
 
     const char* name() const override { return "OpenCL"; }
@@ -202,6 +206,7 @@ private:
     }
 
     cl_command_queue queue_;
+    bool owned_;
     cl_context ctx_ = nullptr;
     cl_device_id device_ = nullptr;
     cl_kernel kernels_[kCount] = {};
@@ -214,6 +219,36 @@ private:
 std::unique_ptr<Backend> makeOpenCLBackend(void* queue)
 {
     return std::make_unique<OpenCLBackend>(static_cast<cl_command_queue>(queue));
+}
+
+std::unique_ptr<Backend> makePrivateOpenCLBackend()
+{
+    // Reuse one private GPU context so runtime-compiled kernels stay cached across frames.
+    struct Context {
+        cl_context context = nullptr;
+        cl_device_id device = nullptr;
+        Context()
+        {
+            cl_uint count = 0;
+            check(clGetPlatformIDs(0, nullptr, &count), "clGetPlatformIDs");
+            std::vector<cl_platform_id> platforms(count);
+            check(clGetPlatformIDs(count, platforms.data(), nullptr), "clGetPlatformIDs");
+            for (auto platform : platforms) {
+                if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr) != CL_SUCCESS) continue;
+                cl_int error;
+                context = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &error);
+                if (context && error == CL_SUCCESS) return;
+            }
+            throw std::runtime_error("OpenCL: no GPU device");
+        }
+        ~Context() { if (context) clReleaseContext(context); }
+    };
+    static Context context;
+    cl_int error;
+    cl_command_queue queue = clCreateCommandQueue(context.context, context.device, 0, &error);
+    check(error, "clCreateCommandQueue");
+    try { return std::make_unique<OpenCLBackend>(queue, true); }
+    catch (...) { clReleaseCommandQueue(queue); throw; }
 }
 
 }  // namespace chromatron

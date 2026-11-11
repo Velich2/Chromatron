@@ -228,4 +228,13 @@ std::unique_ptr<Backend> makeMetalBackend(void* queue)
     return std::make_unique<MetalBackend>((__bridge id<MTLCommandQueue>)queue);
 }
 
+std::unique_ptr<Backend> makePrivateMetalBackend()
+{
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    if (!device) throw std::runtime_error("Metal: no GPU device");
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    if (!queue) throw std::runtime_error("Metal: cannot create private queue");
+    return std::make_unique<MetalBackend>(queue);
+}
+
 }  // namespace chromatron

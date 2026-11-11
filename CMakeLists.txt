@@ -56,6 +56,7 @@ add_custom_target(chromatron_kernel_sources DEPENDS ${GENERATED_DIR}/ChromatronK
 add_library(chromatron_core STATIC
     src/core/About.cpp
     src/core/Chromatron.cpp
+    src/core/PrivateGpu.cpp
     src/backends/CpuBackend.cpp)
 add_dependencies(chromatron_core chromatron_kernel_sources)
 target_include_directories(chromatron_core PUBLIC src PRIVATE ${GENERATED_DIR})

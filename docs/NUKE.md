@@ -38,8 +38,15 @@ Foundry licensing restrictions (including Python automation limits in Indie).
 - **Alpha:** follows the input clip's OFX premultiplication flag. RGB and alpha are processed together.
   The plug-in consumes ordinary float RGBA, not deep images or arbitrary AOV planes. Use DeepToImage
   for deep data and Shuffle/Copy to route the intended layer and preserve other channels explicitly.
-- **Rendering:** the Nuke profile requests CPU buffers and hides Use GPU. Resolve's CUDA/OpenCL/Metal
-  extensions remain available in other hosts. Nuke GPU acceleration is not claimed for this build.
+- **GPU rendering:** **Use GPU** is enabled by default. Nuke supplies CPU image buffers; Chromatron uploads
+  the padded float canvas to a private GPU queue, runs the same kernels and copies the result back. Windows/Linux
+  try CUDA first, then OpenCL GPU devices; macOS uses Metal. The first compatible device is selected independently
+  of Nuke's GPU preference. No Nuke render-thread CUDA context is changed: device setup and CUDA work run on a
+  separate joined thread with its own stream. GPU resources are released before returning the frame.
+  On unsupported hardware, insufficient GPU memory or a failed GPU attempt, the frame is rendered on CPU.
+  Disable Use GPU to force CPU processing. The extra uploads/downloads can make small images slower on GPU.
+  CUDA requirements match the Windows package (Turing or newer and a compatible CUDA 13 driver); OpenCL can
+  serve supported AMD/Intel GPUs or older NVIDIA devices. Resolve keeps host-provided GPU buffers.
 - **ROI:** processing uses a full input canvas for consistent blur pyramids even if the host requests
   only part of the output. This costs memory on very large bounding boxes.
 
@@ -57,7 +64,8 @@ If Nuke registers a version-suffixed class, set `CHROMATRON_NUKE_CLASS` to the e
 `nuke.selectedNode().Class()` after creating Chromatron manually.
 
 Also verify these in the Viewer before production use: ACEScg vs explicit Linear, proxy at 1/2,
-animated Crop, transparent edges, non-square pixel formats, saved-script reload and batch renders.
+animated Crop, transparent edges, non-square pixel formats, saved-script reload, batch renders and
+Use GPU on/off parity.
 The smoke script requires a Nuke edition with unrestricted Python automation; passing it alone
 is not a substitute for the Viewer checks.
 

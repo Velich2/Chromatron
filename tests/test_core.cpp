@@ -987,6 +987,43 @@ void testCuda()
 
 // 8 bpc and After Effects 16 bpc buffers are read and written by the kernels directly: the same
 // picture as the float path, to the precision of the format.
+// Nuke provides CPU images: exercise the complete upload/render/download path with private queues.
+void testPrivateGpu()
+{
+    Frame f;
+    Settings s = parityCase(0, f);
+    Geometry g = fullGeometry(f.w, f.h);
+    std::vector<float> out(f.px.size());
+    std::string backend;
+    bool available = renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend);
+    if (!available) {
+#if CHROMATRON_HAS_CUDA
+        expect(!cudaUsable(), "private GPU must work when the CUDA device is usable");
+#endif
+        std::printf("[skip] private GPU: %s\n", backend.c_str());
+        return;
+    }
+    for (int run = 0; run < 6; ++run) {
+        s = parityCase(run, f);
+        g = fullGeometry(f.w, f.h);
+        g.dstWidth = f.w - 12;
+        g.dstHeight = f.h - 8;
+        g.dstPitch = g.dstWidth * 4;
+        g.dstOffsetX = 5;
+        g.dstOffsetY = 3;
+        const auto ref = runCpu(s, g, f.px);
+        out.assign(ref.size(), -123.0f);
+        const bool rendered = renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend);
+        char label[160];
+        std::snprintf(label, sizeof(label), "Nuke private GPU %s run %d matches CPU (%.2g)",
+                      backend.c_str(), run, maxDiff(ref, out));
+        expect(rendered && maxDiff(ref, out) < 3e-3f, label);
+    }
+    g.dstBaseX = 1;
+    expect(!renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend),
+           "private GPU rejects non-packed destinations before copying");
+}
+
 void testIntegerHosts()
 {
     const Frame f = neutralChart(64, 48);
@@ -1183,6 +1220,7 @@ int main()
     testRadialPole();
     testHalfHost();
     testIntegerHosts();
+    testPrivateGpu();
     testFringeBlur();
     testFringeBlurOnlyFringes();
     testDefocusProfile();

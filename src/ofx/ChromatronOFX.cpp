@@ -274,8 +274,26 @@ private:
                                       {rw.x1, rw.y1, rw.x2, rw.y2}, sx, sy, par, x, y);
         g.dstPitch = dst.getRowBytes() / (int)sizeof(float);
         g.premultiplied = src_->getPreMultiplication() == eImagePreMultiplied;
+        const auto settings = settingsAt(args.time);
+        if (useGpu_->getValue()) {
+            // Host CPU buffers are staged to a private GPU queue, independently of OFX GPU extensions.
+            // Use a packed output so signed/padded host strides never reach the GPU copy code.
+            auto gpuGeometry = g;
+            gpuGeometry.dstBaseX = gpuGeometry.dstBaseY = 0;
+            gpuGeometry.dstPitch = g.dstWidth * 4;
+            std::vector<float> result(cx::ofx::pixelCount({rw.x1, rw.y1, rw.x2, rw.y2}) * 4);
+            std::string backendName;
+            if (cx::renderOnPrivateGpu(cx::buildPlan(settings, gpuGeometry), packed.data(), result.data(), backendName)) {
+                for (int y = 0; y < g.dstHeight; ++y) {
+                    auto* row = reinterpret_cast<float*>(static_cast<char*>(dst.getPixelData()) +
+                                (ptrdiff_t)(g.dstBaseY + y) * dst.getRowBytes()) + g.dstBaseX * 4;
+                    std::copy_n(result.data() + (size_t)y * g.dstWidth * 4, (size_t)g.dstWidth * 4, row);
+                }
+                return;
+            }
+        }
         auto backend = cx::makeCpuBackend();
-        cx::render(*backend, cx::buildPlan(settingsAt(args.time), g), packed.data(), dst.getPixelData());
+        cx::render(*backend, cx::buildPlan(settings, g), packed.data(), dst.getPixelData());
     }
 
     void updateEnabled()
@@ -632,7 +650,7 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     useGpu->setDefault(true);
     useGpu->setAnimates(false);
     page->addChild(*useGpu);
-    if (nukeHost()) useGpu->setIsSecret(true);
+
 
     ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
     space->setLabels("Color Space", "Color Space", "Color Space");
