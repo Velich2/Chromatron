@@ -237,4 +237,9 @@ std::unique_ptr<Backend> makePrivateMetalBackend()
     return std::make_unique<MetalBackend>(queue);
 }
 
+bool metalDeviceAvailable()
+{
+    return MTLCreateSystemDefaultDevice() != nil;
+}
+
 }  // namespace chromatron

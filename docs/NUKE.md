@@ -40,10 +40,13 @@ Foundry licensing restrictions (including Python automation limits in Indie).
   for deep data and Shuffle/Copy to route the intended layer and preserve other channels explicitly.
 - **GPU rendering:** **Use GPU** is enabled by default. Nuke supplies CPU image buffers; Chromatron uploads
   the padded float canvas to a private GPU queue, runs the same kernels and copies the result back. Windows/Linux
-  try CUDA first, then OpenCL GPU devices; macOS uses Metal. The first compatible device is selected independently
-  of Nuke's GPU preference. No Nuke render-thread CUDA context is changed: device setup and CUDA work run on a
-  separate joined thread with its own stream. GPU resources are released before returning the frame.
+  try CUDA first, then OpenCL GPU devices; macOS uses Metal. OpenCL checks all GPU devices across platforms
+  until a device creates a queue and builds every kernel, then reuses that device and its compiled program.
+  Selection is independent of Nuke's GPU preference. CUDA device setup and work run on a separate joined
+  thread with its own stream. Frame buffers and private queues are released before returning the frame.
   On unsupported hardware, insufficient GPU memory or a failed GPU attempt, the frame is rendered on CPU.
+  If RAM allocation for the GPU output staging copy fails, CPU rendering writes directly into Nuke's output
+  image. The input canvas and CPU working buffers still require memory.
   Disable Use GPU to force CPU processing. The extra uploads/downloads can make small images slower on GPU.
   CUDA requirements match the Windows package (Turing or newer and a compatible CUDA 13 driver); OpenCL can
   serve supported AMD/Intel GPUs or older NVIDIA devices. Resolve keeps host-provided GPU buffers.
@@ -51,6 +54,11 @@ Foundry licensing restrictions (including Python automation limits in Indie).
   only part of the output. This costs memory on very large bounding boxes.
 
 ## Host smoke test
+
+The core tests discover GPU devices separately from compiling kernels and creating queues. Each available
+CUDA, OpenCL and Metal backend must pass its own upload/render/download comparison against CPU in all three
+modes, including look controls and offset output windows. A kernel or queue failure on a detected OpenCL
+or Metal device fails the tests; only an absent device allows those tests to be skipped.
 
 Run in a separate licensed Nuke process, after installing the bundle:
 

@@ -19,6 +19,13 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace chromatron {
 
 namespace {
@@ -26,6 +33,33 @@ namespace {
 void check(cl_int err, const char* what)
 {
     if (err != CL_SUCCESS) throw std::runtime_error(std::string("OpenCL: ") + what + " failed (" + std::to_string(err) + ")");
+}
+
+std::vector<cl_device_id> gpuDevices()
+{
+#ifdef _WIN32
+    // The runtime is optional and delay-loaded on Windows.
+    static HMODULE runtime = LoadLibraryW(L"OpenCL.dll");
+    if (!runtime) return {};
+#endif
+    cl_uint count = 0;
+    const cl_int status = clGetPlatformIDs(0, nullptr, &count);
+    if (status == -1001 || (status == CL_SUCCESS && count == 0)) return {}; // CL_PLATFORM_NOT_FOUND_KHR
+    check(status, "clGetPlatformIDs");
+    std::vector<cl_platform_id> platforms(count);
+    check(clGetPlatformIDs(count, platforms.data(), nullptr), "clGetPlatformIDs");
+    std::vector<cl_device_id> devices;
+    for (auto platform : platforms) {
+        cl_uint deviceCount = 0;
+        const cl_int error = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, nullptr, &deviceCount);
+        if (error == CL_DEVICE_NOT_FOUND || (error == CL_SUCCESS && deviceCount == 0)) continue;
+        check(error, "clGetDeviceIDs");
+        const size_t offset = devices.size();
+        devices.resize(offset + deviceCount);
+        check(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, deviceCount, devices.data() + offset, nullptr),
+              "clGetDeviceIDs");
+    }
+    return devices;
 }
 
 cl_program programFor(cl_context ctx, cl_device_id device)
@@ -64,10 +98,16 @@ public:
         check(clGetCommandQueueInfo(queue, CL_QUEUE_DEVICE, sizeof(device_), &device_, nullptr), "CL_QUEUE_DEVICE");
         cl_program program = programFor(ctx_, device_);
         const char* names[kCount] = {"k_import", "k_luma", "k_blur", "k_downsample", "k_contrast", "k_gather"};
-        for (int i = 0; i < kCount; ++i) {
-            cl_int err = CL_SUCCESS;
-            kernels_[i] = clCreateKernel(program, names[i], &err);
-            check(err, names[i]);
+        try {
+            for (int i = 0; i < kCount; ++i) {
+                cl_int err = CL_SUCCESS;
+                kernels_[i] = clCreateKernel(program, names[i], &err);
+                check(err, names[i]);
+            }
+        } catch (...) {
+            for (cl_kernel k : kernels_)
+                if (k) clReleaseKernel(k);
+            throw;
         }
     }
 
@@ -223,23 +263,36 @@ std::unique_ptr<Backend> makeOpenCLBackend(void* queue)
 
 std::unique_ptr<Backend> makePrivateOpenCLBackend()
 {
-    // Reuse one private GPU context so runtime-compiled kernels stay cached across frames.
+    // Cache the first device that builds every kernel. A failed candidate must not prevent
+    // trying another GPU, including devices on the same platform.
     struct Context {
         cl_context context = nullptr;
         cl_device_id device = nullptr;
         Context()
         {
-            cl_uint count = 0;
-            check(clGetPlatformIDs(0, nullptr, &count), "clGetPlatformIDs");
-            std::vector<cl_platform_id> platforms(count);
-            check(clGetPlatformIDs(count, platforms.data(), nullptr), "clGetPlatformIDs");
-            for (auto platform : platforms) {
-                if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr) != CL_SUCCESS) continue;
-                cl_int error;
-                context = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &error);
-                if (context && error == CL_SUCCESS) return;
+            std::string failures;
+            for (auto candidate : gpuDevices()) {
+                cl_context candidateContext = nullptr;
+                cl_command_queue queue = nullptr;
+                try {
+                    cl_int error;
+                    candidateContext = clCreateContext(nullptr, 1, &candidate, nullptr, nullptr, &error);
+                    check(error, "clCreateContext");
+                    queue = clCreateCommandQueue(candidateContext, candidate, 0, &error);
+                    check(error, "clCreateCommandQueue");
+                    // This probe borrows the queue, so cleanup also covers a failed constructor.
+                    { OpenCLBackend probe(queue); }
+                    clReleaseCommandQueue(queue);
+                    context = candidateContext;
+                    device = candidate;
+                    return;
+                } catch (const std::exception& e) {
+                    if (queue) clReleaseCommandQueue(queue);
+                    if (candidateContext) clReleaseContext(candidateContext);
+                    failures += std::string(failures.empty() ? "" : "\n") + e.what();
+                }
             }
-            throw std::runtime_error("OpenCL: no GPU device");
+            throw std::runtime_error(failures.empty() ? "OpenCL: no GPU device" : failures);
         }
         ~Context() { if (context) clReleaseContext(context); }
     };
@@ -249,6 +302,12 @@ std::unique_ptr<Backend> makePrivateOpenCLBackend()
     check(error, "clCreateCommandQueue");
     try { return std::make_unique<OpenCLBackend>(queue, true); }
     catch (...) { clReleaseCommandQueue(queue); throw; }
+}
+
+bool openCLGpuAvailable()
+{
+    // Hardware discovery is independent of kernel compilation, for diagnostics and tests.
+    return !gpuDevices().empty();
 }
 
 }  // namespace chromatron

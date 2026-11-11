@@ -985,22 +985,76 @@ void testCuda()
 }
 #endif
 
-// 8 bpc and After Effects 16 bpc buffers are read and written by the kernels directly: the same
-// picture as the float path, to the precision of the format.
+bool testPrivateGpuBackend(const char* name, bool (*deviceAvailable)(), std::unique_ptr<Backend> (*factory)())
+{
+    bool available = false;
+    try {
+        available = deviceAvailable();
+        if (!available) {
+            std::printf("[skip] private %s: no GPU device\n", name);
+            return false;
+        }
+        for (int run = 0; run < 6; ++run) {
+            Frame f;
+            const Settings s = parityCase(run, f);
+            Geometry g = fullGeometry(f.w, f.h);
+            g.dstWidth = f.w - 12;
+            g.dstHeight = f.h - 8;
+            g.dstPitch = g.dstWidth * 4;
+            g.dstOffsetX = 5;
+            g.dstOffsetY = 3;
+            const auto ref = runCpu(s, g, f.px);
+            std::vector<float> out(ref.size(), -123.0f);
+            const Plan plan = buildPlan(s, g);
+            // Each factory must succeed on its own, even when another API is also available.
+            std::async(std::launch::async, [&] {
+                auto backend = factory();
+                struct Buffer {
+                    Backend& backend;
+                    void* data;
+                    ~Buffer() { backend.release(data); }
+                };
+                Buffer input{*backend, backend->alloc(f.px.size() * sizeof(float))};
+                Buffer output{*backend, backend->alloc(out.size() * sizeof(float))};
+                backend->upload(f.px.data(), input.data, f.px.size() * sizeof(float));
+                render(*backend, plan, input.data, output.data);
+                backend->download(output.data, out.data(), out.size() * sizeof(float));
+                backend->finish();
+            }).get();
+            char label[160];
+            std::snprintf(label, sizeof(label), "private %s run %d matches CPU (%.2g)",
+                          name, run, maxDiff(ref, out));
+            expect(maxDiff(ref, out) < 3e-3f, label);
+        }
+    } catch (const std::exception& e) {
+        std::printf("private %s: %s\n", name, e.what());
+        expect(false, "GPU discovery and rendering succeed when a device is present");
+    }
+    return available;
+}
+
 // Nuke provides CPU images: exercise the complete upload/render/download path with private queues.
 void testPrivateGpu()
 {
+    bool gpuPresent = false;
+#if CHROMATRON_HAS_CUDA
+    gpuPresent |= testPrivateGpuBackend("CUDA", cudaUsable, makePrivateCudaBackend);
+#endif
+#if CHROMATRON_HAS_METAL
+    gpuPresent |= testPrivateGpuBackend("Metal", metalDeviceAvailable, makePrivateMetalBackend);
+#endif
+#if CHROMATRON_HAS_OPENCL
+    gpuPresent |= testPrivateGpuBackend("OpenCL", openCLGpuAvailable, makePrivateOpenCLBackend);
+#endif
     Frame f;
     Settings s = parityCase(0, f);
     Geometry g = fullGeometry(f.w, f.h);
     std::vector<float> out(f.px.size());
     std::string backend;
     bool available = renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend);
+    expect(available || !gpuPresent, "private GPU selection succeeds when a device is present");
     if (!available) {
-#if CHROMATRON_HAS_CUDA
-        expect(!cudaUsable(), "private GPU must work when the CUDA device is usable");
-#endif
-        std::printf("[skip] private GPU: %s\n", backend.c_str());
+        std::printf("%s private GPU: %s\n", gpuPresent ? "[FAIL]" : "[skip]", backend.c_str());
         return;
     }
     for (int run = 0; run < 6; ++run) {
@@ -1024,6 +1078,7 @@ void testPrivateGpu()
            "private GPU rejects non-packed destinations before copying");
 }
 
+// Integer host buffers must match float rendering to their quantisation precision.
 void testIntegerHosts()
 {
     const Frame f = neutralChart(64, 48);

@@ -1,6 +1,6 @@
 # Chromatron
 
-Chromatic aberration plug-in for **After Effects**, **Premiere Pro** and **OpenFX (DaVinci Resolve)**.
+Chromatic aberration plug-in for **After Effects**, **Premiere Pro** and **OpenFX (DaVinci Resolve, Nuke)**.
 CPU and GPU (CUDA, OpenCL, Metal) render from the same kernel source.
 
 ![preview](docs/preview.png)
@@ -33,6 +33,8 @@ page when a newer version exists; nothing is installed automatically and nothing
 The same OFX bundle has a Nuke profile: scene-linear colour by default, an optical axis relative to
 project format, expanded bounding boxes and transparent-black input padding. Use GPU runs the kernels on a
 private CUDA/OpenCL/Metal queue, uploading Nuke's CPU buffers and downloading the result; CPU is the fallback.
+OpenCL tries each GPU until its kernels build successfully. If the additional GPU output copy cannot fit
+in RAM, processing falls back to CPU and writes directly into Nuke's output image.
 See [Nuke installation, colour setup and testing](docs/NUKE.md). Nuke is not installed on the development
 machine, so in-host compatibility remains unverified. Nuke Non-commercial cannot load third-party plug-ins.
 

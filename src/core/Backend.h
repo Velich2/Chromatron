@@ -65,12 +65,15 @@ std::unique_ptr<Backend> makePrivateCudaBackend();
 // queue: cl_command_queue owned by the host application.
 std::unique_ptr<Backend> makeOpenCLBackend(void* queue);
 std::unique_ptr<Backend> makePrivateOpenCLBackend();
+// Hardware discovery only. Kernel or queue failures must be reported separately.
+bool openCLGpuAvailable();
 #endif
 
 #if CHROMATRON_HAS_METAL
 // queue: id<MTLCommandQueue> owned by the host application.
 std::unique_ptr<Backend> makeMetalBackend(void* queue);
 std::unique_ptr<Backend> makePrivateMetalBackend();
+bool metalDeviceAvailable();
 #endif
 
 }  // namespace chromatron

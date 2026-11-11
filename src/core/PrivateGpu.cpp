@@ -4,13 +4,6 @@
 #include <limits>
 #include <stdexcept>
 
-#if CHROMATRON_HAS_OPENCL && defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
-
 namespace chromatron {
 namespace {
 using Factory = std::unique_ptr<Backend> (*)();
@@ -63,13 +56,7 @@ bool renderOnPrivateGpu(const Plan& plan, const float* src, float* dst, std::str
             if (attempt(makePrivateMetalBackend, plan, src, dst, name)) return true;
 #endif
 #if CHROMATRON_HAS_OPENCL
-#ifdef _WIN32
-            // OpenCL.dll is optional and delay-loaded. Avoid a delay-load exception on CPU-only machines.
-            static HMODULE opencl = LoadLibraryW(L"OpenCL.dll");
-            if (opencl && attempt(makePrivateOpenCLBackend, plan, src, dst, name)) return true;
-#else
             if (attempt(makePrivateOpenCLBackend, plan, src, dst, name)) return true;
-#endif
 #endif
             if (name.empty()) name = "No usable GPU backend in this build";
             return false;
