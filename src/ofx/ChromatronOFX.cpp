@@ -6,6 +6,7 @@
 
 #include "ofxsImageEffect.h"
 #include "ofxColour.h"
+#include "HostPolicy.h"
 
 #include <cmath>
 #include <memory>
@@ -26,6 +27,14 @@ namespace {
 
 using namespace OFX;
 namespace cx = chromatron;
+
+std::string hostName()
+{
+    const auto* host = getImageEffectHostDescription();
+    return host ? host->hostName : std::string();
+}
+
+bool nukeHost() { return cx::ofx::isNuke(hostName()); }
 
 const char* const kAbout = "about";
 const char* const kMode = "mode";
@@ -91,6 +100,19 @@ public:
     }
 
     void render(const RenderArguments& args) override;
+
+    bool getRegionOfDefinition(const RegionOfDefinitionArguments& args, OfxRectD& rod) override
+    {
+        if (!nukeHost()) return false;
+        rod = nukeOutputRod(args.time);
+        return true;
+    }
+
+    void getRegionsOfInterest(const RegionsOfInterestArguments& args, RegionOfInterestSetter& rois) override
+    {
+        // The blur pyramid and optical axis must see the same complete image for every render window.
+        if (nukeHost()) rois.setRegionOfInterest(*src_, src_->getRegionOfDefinition(args.time));
+    }
 
     bool isIdentity(const IsIdentityArguments& args, Clip*& identityClip, double& identityTime) override
     {
@@ -183,9 +205,8 @@ private:
         return s;
     }
 
-    // Auto: the source clip's colour space as reported through OpenFX colour management.
-    // Hosts without it (or reporting nothing usable) get Rec.709 Gamma 2.4, Resolve's default
-    // timeline encoding.
+    // Prefer reported clip metadata. Without it Nuke receives linear Rec.709, other hosts gamma 2.4.
+    // An OCIO/ACES working space must be selected explicitly when the host does not expose it.
     cx::ColorSpace hostColorSpace() const
     {
         const std::string style = getPropertySet().propGetString(kOfxImageEffectPropColourManagementStyle, 0, false);
@@ -194,7 +215,67 @@ private:
             cx::ColorSpace cs;
             if (cx::colorSpaceFromName(name, cs)) return cs;
         }
-        return cx::ColorSpace::Rec709Gamma24;
+        return cx::ofx::fallbackSpace(hostName());
+    }
+
+    cx::ofx::Rect nukeFormat() const
+    {
+        const auto offset = getProjectOffset(), size = getProjectSize();
+        if (!(size.x > 0.0 && size.y > 0.0))
+            throw std::runtime_error("Chromatron: Nuke did not supply a finite project format");
+        return {offset.x, offset.y, offset.x + size.x, offset.y + size.y};
+    }
+
+    OfxRectD nukeOutputRod(double time) const
+    {
+        OfxRectD r = src_->getRegionOfDefinition(time);
+        if (r.x2 <= r.x1 || r.y2 <= r.y1 || cx::isIdentity(settingsAt(time))) return r;
+        const auto f = nukeFormat();
+        double x = 0.5, y = 0.5;
+        center_->getValueAtTime(time, x, y);
+        const double par = std::max(1e-6, src_->getPixelAspectRatio());
+        const double cxp = (f.x1 + x * (f.x2 - f.x1)) / par;
+        const double cyp = f.y1 + y * (f.y2 - f.y1);
+        double field = 1.0;
+        const double hd = std::max(1.0, 0.5 * std::hypot((f.x2 - f.x1) / par, f.y2 - f.y1));
+        for (double px : {r.x1 / par, r.x2 / par})
+            for (double py : {r.y1, r.y2}) field = std::max(field, std::hypot(px - cxp, py - cyp) / hd);
+        const double margin = std::ceil(cx::sampleMargin(settingsAt(time), 1.0, field));
+        r.x1 -= margin * par;
+        r.x2 += margin * par;
+        r.y1 -= margin;
+        r.y2 += margin;
+        return r;
+    }
+
+    void renderNuke(const RenderArguments& args, Image& dst, const Image* src)
+    {
+        if (args.isEnabledCudaRender || args.isEnabledOpenCLRender || args.isEnabledMetalRender)
+            throw std::runtime_error("Chromatron: Nuke profile requires CPU image buffers");
+        const double sx = args.renderScale.x, sy = args.renderScale.y;
+        if (!(sx > 0.0 && sy > 0.0)) throw std::runtime_error("Chromatron: invalid render scale");
+        const double par = src_->getPixelAspectRatio() > 0 ? src_->getPixelAspectRatio() : 1.0;
+        const auto rod = nukeOutputRod(args.time);
+        auto canvas = cx::ofx::pixelRect({rod.x1, rod.y1, rod.x2, rod.y2}, sx, sy, par);
+        const auto db = dst.getBounds();
+        const auto rw = args.renderWindow;
+        if (rw.x1 < db.x1 || rw.y1 < db.y1 || rw.x2 > db.x2 || rw.y2 > db.y2)
+            throw std::runtime_error("Chromatron: render window lies outside the output buffer");
+        // A zero border also makes clamp-to-edge kernels see black outside the data window.
+        canvas.x1 -= 2; canvas.y1 -= 2; canvas.x2 += 2; canvas.y2 += 2;
+        cx::ofx::pixelCount(canvas);
+        std::vector<float> packed;
+        const auto sb = src ? src->getBounds() : OfxRectI{0, 0, 0, 0};
+        cx::ofx::copyBlackPadded(src ? src->getPixelData() : nullptr,
+                                {sb.x1, sb.y1, sb.x2, sb.y2}, src ? src->getRowBytes() : 0, canvas, packed);
+        double x = 0.5, y = 0.5;
+        center_->getValueAtTime(args.time, x, y);
+        auto g = cx::ofx::nukeGeometry(nukeFormat(), canvas, {db.x1, db.y1, db.x2, db.y2},
+                                      {rw.x1, rw.y1, rw.x2, rw.y2}, sx, sy, par, x, y);
+        g.dstPitch = dst.getRowBytes() / (int)sizeof(float);
+        g.premultiplied = src_->getPreMultiplication() == eImagePreMultiplied;
+        auto backend = cx::makeCpuBackend();
+        cx::render(*backend, cx::buildPlan(settingsAt(args.time), g), packed.data(), dst.getPixelData());
     }
 
     void updateEnabled()
@@ -265,7 +346,19 @@ void ChromatronPlugin::render(const RenderArguments& args)
 {
     std::unique_ptr<Image> dst(dst_->fetchImage(args.time));
     std::unique_ptr<Image> src(src_->fetchImage(args.time));
-    if (!dst || !src) throwSuiteStatusException(kOfxStatFailed);
+    if (!dst) throwSuiteStatusException(kOfxStatFailed);
+    if (nukeHost()) {
+        if (dst->getPixelDepth() != eBitDepthFloat || dst->getPixelComponents() != ePixelComponentRGBA ||
+            (src && (src->getPixelDepth() != eBitDepthFloat || src->getPixelComponents() != ePixelComponentRGBA)))
+            throwSuiteStatusException(kOfxStatErrUnsupported);
+        try { renderNuke(args, *dst, src.get()); }
+        catch (const std::exception& e) {
+            setPersistentMessage(Message::eMessageError, "", std::string("Chromatron: ") + e.what());
+            throwSuiteStatusException(kOfxStatFailed);
+        }
+        return;
+    }
+    if (!src) throwSuiteStatusException(kOfxStatFailed);
     if (dst->getPixelDepth() != eBitDepthFloat || dst->getPixelComponents() != ePixelComponentRGBA ||
         src->getPixelDepth() != eBitDepthFloat || src->getPixelComponents() != ePixelComponentRGBA)
         throwSuiteStatusException(kOfxStatErrUnsupported);
@@ -377,6 +470,8 @@ void ChromatronFactory::describe(ImageEffectDescriptor& desc)
                                         kOfxImageEffectColourManagementCore, false);
     desc.getPropertySet().propSetString(kOfxImageEffectPropColourManagementAvailableConfigs,
                                         "ofx-native-v1.5_aces-v1.3_ocio-v2.3", false);
+    // Nuke's standard OFX path uses CPU buffers; GPU extensions are negotiated only in other hosts.
+    if (!nukeHost()) {
 #if CHROMATRON_HAS_OPENCL
     desc.setSupportsOpenCLBuffersRender(true);
 #endif
@@ -387,6 +482,7 @@ void ChromatronFactory::describe(ImageEffectDescriptor& desc)
 #if CHROMATRON_HAS_METAL
     desc.setSupportsMetalRender(true);
 #endif
+    }
 }
 
 void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum)
@@ -536,11 +632,12 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     useGpu->setDefault(true);
     useGpu->setAnimates(false);
     page->addChild(*useGpu);
+    if (nukeHost()) useGpu->setIsSecret(true);
 
     ChoiceParamDescriptor* space = desc.defineChoiceParam(kSpace);
     space->setLabels("Color Space", "Color Space", "Color Space");
     space->setHint("Encoding of the timeline / clip. Auto uses the colour space the host reports for the clip "
-                   "(OpenFX colour management) and falls back to Rec.709 Gamma 2.4. The optics run on linear light; "
+                   "(OpenFX colour management). Fallback: linear Rec.709 in Nuke, Rec.709 Gamma 2.4 elsewhere. The optics run on linear light; "
                    "ACES inputs are processed "
                    "in ACEScg (AP1). Resolve ACES projects: ACEScct; DaVinci Color Managed (wide gamut): "
                    "DaVinci Wide Gamut / Intermediate.");

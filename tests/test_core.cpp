@@ -2,6 +2,7 @@
 
 #include "core/About.h"
 #include "core/Chromatron.h"
+#include "ofx/HostPolicy.h"
 
 #if CHROMATRON_HAS_OPENCL
 #ifdef _WIN32
@@ -1119,10 +1120,53 @@ void testMetal()
 }
 #endif
 
+void testNukePolicy()
+{
+    namespace host = chromatron::ofx;
+    expect(host::isNuke("uk.co.thefoundry.nuke") && host::isNuke("uk.co.thefoundry.nuke.16") &&
+               !host::isNuke("uk.co.thefoundry.nukeish") &&
+               host::fallbackSpace("uk.co.thefoundry.nuke") == ColorSpace::LinearRec709 &&
+               host::fallbackSpace("DaVinciResolve") == ColorSpace::Rec709Gamma24,
+           "Nuke uses scene-linear fallback; Resolve keeps gamma 2.4");
+    const host::Rect format{0, 0, 1920, 1080};
+    const auto a = host::nukeGeometry(format, {-100, -50, 200, 200}, {0,0,100,100}, {0,0,100,100},
+                                     1, 1, 1, 0.5, 0.5);
+    const auto b = host::nukeGeometry(format, {800, 400, 1200, 800}, {0,0,100,100}, {0,0,100,100},
+                                     1, 1, 1, 0.5, 0.5);
+    expect(a.centerX - 100 == b.centerX + 800 && a.centerY - 50 == b.centerY + 400 &&
+               a.halfDiagonal == b.halfDiagonal,
+           "Nuke optical axis follows format, independent of a moving bounding box");
+    const auto proxy = host::nukeGeometry(format, {0,0,480,270}, {0,0,480,270}, {0,0,480,270},
+                                         0.5, 0.5, 2, 0.5, 0.5);
+    expect(proxy.centerX == 239.5 && proxy.centerY == 269.5,
+           "Nuke project coordinates respect proxy scale and pixel aspect ratio");
+    // Two rows stored bottom-to-top; the pointer identifies the lower-left pixel as OFX requires.
+    float rows[16] = {5,6,7,1, 8,9,10,1, 1,2,3,1, 2,3,4,1};
+    std::vector<float> packed;
+    host::copyBlackPadded(rows + 8, {-2,3,0,5}, -8 * sizeof(float), {-3,2,1,6}, packed);
+    const size_t first = (1 * 4 + 1) * 4, second = (2 * 4 + 1) * 4;
+    expect(packed.size() == 64 && packed[first] == 1 && packed[second] == 5 && packed[0] == 0 &&
+               packed[3] == 0 && packed[63] == 0,
+           "Nuke input padding handles negative origins, negative strides and transparent black");
+    // A constant nonzero edge must fade into black instead of extending infinitely.
+    Settings settings; settings.space = ColorSpace::LinearRec709; settings.distance = 4;
+    settings.angleDeg = 0; settings.spread = 0;
+    std::vector<float> image(8 * 8 * 4, 1.0f), pad;
+    host::copyBlackPadded(image.data(), {0,0,8,8}, 8*4*sizeof(float), {-8,-8,16,16}, pad);
+    const auto out = runCpu(settings, fullGeometry(24,24), pad);
+    expect(out[3] == 0 && out[(12*24+12)*4] > 0.9f && out[(12*24+7)*4+3] > 0,
+           "Nuke fringes extend into expanded black bounding box without edge repetition");
+    bool rejected = false;
+    try { host::pixelRect({0,0,std::numeric_limits<double>::infinity(),1080},1,1,1); }
+    catch (const std::runtime_error&) { rejected = true; }
+    expect(rejected, "Nuke infinite bounding boxes are rejected before allocating memory");
+}
+
 }  // namespace
 
 int main()
 {
+    testNukePolicy();
     testWeights();
     testFlatField();
     testIdentity();
