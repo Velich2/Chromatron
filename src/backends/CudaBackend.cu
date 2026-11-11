@@ -66,7 +66,15 @@ float* F(void* p) { return static_cast<float*>(p); }
 
 class CudaBackend final : public Backend {
 public:
-    explicit CudaBackend(cudaStream_t stream) : stream_(stream) {}
+    explicit CudaBackend(cudaStream_t stream, bool owned = false) : stream_(stream), owned_(owned) {}
+
+    ~CudaBackend() override
+    {
+        if (owned_) {
+            cudaStreamSynchronize(stream_);
+            cudaStreamDestroy(stream_);
+        }
+    }
 
     const char* name() const override { return "CUDA"; }
 
@@ -137,6 +145,7 @@ private:
     static dim3 grid(int w, int h) { return dim3((unsigned)(w + 15) / 16, (unsigned)(h + 15) / 16); }
 
     cudaStream_t stream_;
+    bool owned_;
 };
 
 }  // namespace
@@ -144,6 +153,21 @@ private:
 std::unique_ptr<Backend> makeCudaBackend(void* stream)
 {
     return std::make_unique<CudaBackend>(static_cast<cudaStream_t>(stream));
+}
+
+std::unique_ptr<Backend> makePrivateCudaBackend()
+{
+    // Called only on a fresh worker thread, never changing the Nuke render thread's device/context.
+    int count = 0;
+    check(cudaGetDeviceCount(&count), "cudaGetDeviceCount");
+    for (int device = 0; device < count; ++device) {
+        if (cudaSetDevice(device) != cudaSuccess || !cudaUsable()) { cudaGetLastError(); continue; }
+        cudaStream_t stream = nullptr;
+        check(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), "cudaStreamCreate");
+        try { return std::make_unique<CudaBackend>(stream, true); }
+        catch (...) { cudaStreamDestroy(stream); throw; }
+    }
+    throw std::runtime_error("CUDA: no compatible GPU");
 }
 
 bool cudaUsable()

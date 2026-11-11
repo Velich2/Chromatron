@@ -2,6 +2,7 @@
 
 #include "core/About.h"
 #include "core/Chromatron.h"
+#include "ofx/HostPolicy.h"
 
 #if CHROMATRON_HAS_OPENCL
 #ifdef _WIN32
@@ -984,8 +985,100 @@ void testCuda()
 }
 #endif
 
-// 8 bpc and After Effects 16 bpc buffers are read and written by the kernels directly: the same
-// picture as the float path, to the precision of the format.
+bool testPrivateGpuBackend(const char* name, bool (*deviceAvailable)(), std::unique_ptr<Backend> (*factory)())
+{
+    bool available = false;
+    try {
+        available = deviceAvailable();
+        if (!available) {
+            std::printf("[skip] private %s: no GPU device\n", name);
+            return false;
+        }
+        for (int run = 0; run < 6; ++run) {
+            Frame f;
+            const Settings s = parityCase(run, f);
+            Geometry g = fullGeometry(f.w, f.h);
+            g.dstWidth = f.w - 12;
+            g.dstHeight = f.h - 8;
+            g.dstPitch = g.dstWidth * 4;
+            g.dstOffsetX = 5;
+            g.dstOffsetY = 3;
+            const auto ref = runCpu(s, g, f.px);
+            std::vector<float> out(ref.size(), -123.0f);
+            const Plan plan = buildPlan(s, g);
+            // Each factory must succeed on its own, even when another API is also available.
+            std::async(std::launch::async, [&] {
+                auto backend = factory();
+                struct Buffer {
+                    Backend& backend;
+                    void* data;
+                    ~Buffer() { backend.release(data); }
+                };
+                Buffer input{*backend, backend->alloc(f.px.size() * sizeof(float))};
+                Buffer output{*backend, backend->alloc(out.size() * sizeof(float))};
+                backend->upload(f.px.data(), input.data, f.px.size() * sizeof(float));
+                render(*backend, plan, input.data, output.data);
+                backend->download(output.data, out.data(), out.size() * sizeof(float));
+                backend->finish();
+            }).get();
+            char label[160];
+            std::snprintf(label, sizeof(label), "private %s run %d matches CPU (%.2g)",
+                          name, run, maxDiff(ref, out));
+            expect(maxDiff(ref, out) < 3e-3f, label);
+        }
+    } catch (const std::exception& e) {
+        std::printf("private %s: %s\n", name, e.what());
+        expect(false, "GPU discovery and rendering succeed when a device is present");
+    }
+    return available;
+}
+
+// Nuke provides CPU images: exercise the complete upload/render/download path with private queues.
+void testPrivateGpu()
+{
+    bool gpuPresent = false;
+#if CHROMATRON_HAS_CUDA
+    gpuPresent |= testPrivateGpuBackend("CUDA", cudaUsable, makePrivateCudaBackend);
+#endif
+#if CHROMATRON_HAS_METAL
+    gpuPresent |= testPrivateGpuBackend("Metal", metalDeviceAvailable, makePrivateMetalBackend);
+#endif
+#if CHROMATRON_HAS_OPENCL
+    gpuPresent |= testPrivateGpuBackend("OpenCL", openCLGpuAvailable, makePrivateOpenCLBackend);
+#endif
+    Frame f;
+    Settings s = parityCase(0, f);
+    Geometry g = fullGeometry(f.w, f.h);
+    std::vector<float> out(f.px.size());
+    std::string backend;
+    bool available = renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend);
+    expect(available || !gpuPresent, "private GPU selection succeeds when a device is present");
+    if (!available) {
+        std::printf("%s private GPU: %s\n", gpuPresent ? "[FAIL]" : "[skip]", backend.c_str());
+        return;
+    }
+    for (int run = 0; run < 6; ++run) {
+        s = parityCase(run, f);
+        g = fullGeometry(f.w, f.h);
+        g.dstWidth = f.w - 12;
+        g.dstHeight = f.h - 8;
+        g.dstPitch = g.dstWidth * 4;
+        g.dstOffsetX = 5;
+        g.dstOffsetY = 3;
+        const auto ref = runCpu(s, g, f.px);
+        out.assign(ref.size(), -123.0f);
+        const bool rendered = renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend);
+        char label[160];
+        std::snprintf(label, sizeof(label), "Nuke private GPU %s run %d matches CPU (%.2g)",
+                      backend.c_str(), run, maxDiff(ref, out));
+        expect(rendered && maxDiff(ref, out) < 3e-3f, label);
+    }
+    g.dstBaseX = 1;
+    expect(!renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend),
+           "private GPU rejects non-packed destinations before copying");
+}
+
+// Integer host buffers must match float rendering to their quantisation precision.
 void testIntegerHosts()
 {
     const Frame f = neutralChart(64, 48);
@@ -1119,10 +1212,53 @@ void testMetal()
 }
 #endif
 
+void testNukePolicy()
+{
+    namespace host = chromatron::ofx;
+    expect(host::isNuke("uk.co.thefoundry.nuke") && host::isNuke("uk.co.thefoundry.nuke.16") &&
+               !host::isNuke("uk.co.thefoundry.nukeish") &&
+               host::fallbackSpace("uk.co.thefoundry.nuke") == ColorSpace::LinearRec709 &&
+               host::fallbackSpace("DaVinciResolve") == ColorSpace::Rec709Gamma24,
+           "Nuke uses scene-linear fallback; Resolve keeps gamma 2.4");
+    const host::Rect format{0, 0, 1920, 1080};
+    const auto a = host::nukeGeometry(format, {-100, -50, 200, 200}, {0,0,100,100}, {0,0,100,100},
+                                     1, 1, 1, 0.5, 0.5);
+    const auto b = host::nukeGeometry(format, {800, 400, 1200, 800}, {0,0,100,100}, {0,0,100,100},
+                                     1, 1, 1, 0.5, 0.5);
+    expect(a.centerX - 100 == b.centerX + 800 && a.centerY - 50 == b.centerY + 400 &&
+               a.halfDiagonal == b.halfDiagonal,
+           "Nuke optical axis follows format, independent of a moving bounding box");
+    const auto proxy = host::nukeGeometry(format, {0,0,480,270}, {0,0,480,270}, {0,0,480,270},
+                                         0.5, 0.5, 2, 0.5, 0.5);
+    expect(proxy.centerX == 239.5 && proxy.centerY == 269.5,
+           "Nuke project coordinates respect proxy scale and pixel aspect ratio");
+    // Two rows stored bottom-to-top; the pointer identifies the lower-left pixel as OFX requires.
+    float rows[16] = {5,6,7,1, 8,9,10,1, 1,2,3,1, 2,3,4,1};
+    std::vector<float> packed;
+    host::copyBlackPadded(rows + 8, {-2,3,0,5}, -8 * sizeof(float), {-3,2,1,6}, packed);
+    const size_t first = (1 * 4 + 1) * 4, second = (2 * 4 + 1) * 4;
+    expect(packed.size() == 64 && packed[first] == 1 && packed[second] == 5 && packed[0] == 0 &&
+               packed[3] == 0 && packed[63] == 0,
+           "Nuke input padding handles negative origins, negative strides and transparent black");
+    // A constant nonzero edge must fade into black instead of extending infinitely.
+    Settings settings; settings.space = ColorSpace::LinearRec709; settings.distance = 4;
+    settings.angleDeg = 0; settings.spread = 0;
+    std::vector<float> image(8 * 8 * 4, 1.0f), pad;
+    host::copyBlackPadded(image.data(), {0,0,8,8}, 8*4*sizeof(float), {-8,-8,16,16}, pad);
+    const auto out = runCpu(settings, fullGeometry(24,24), pad);
+    expect(out[3] == 0 && out[(12*24+12)*4] > 0.9f && out[(12*24+7)*4+3] > 0,
+           "Nuke fringes extend into expanded black bounding box without edge repetition");
+    bool rejected = false;
+    try { host::pixelRect({0,0,std::numeric_limits<double>::infinity(),1080},1,1,1); }
+    catch (const std::runtime_error&) { rejected = true; }
+    expect(rejected, "Nuke infinite bounding boxes are rejected before allocating memory");
+}
+
 }  // namespace
 
 int main()
 {
+    testNukePolicy();
     testWeights();
     testFlatField();
     testIdentity();
@@ -1139,6 +1275,7 @@ int main()
     testRadialPole();
     testHalfHost();
     testIntegerHosts();
+    testPrivateGpu();
     testFringeBlur();
     testFringeBlurOnlyFringes();
     testDefocusProfile();
