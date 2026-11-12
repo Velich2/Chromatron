@@ -102,7 +102,7 @@ void showAboutDialog(const AskFunction& fallback)
 {
     const std::string installed = version();
     const std::string about = "Chromatron " + installed +
-                              "\n\nOptical chromatic aberration for After Effects, Premiere Pro and DaVinci Resolve.";
+                              "\n\nOptical chromatic aberration for After Effects, Premiere Pro, DaVinci Resolve and Nuke.";
     if (ask(fallback, about, "Check for Updates", "Close") != 1) return;
 
     std::string latest, error;
@@ -281,7 +281,7 @@ bool ask(const std::string& title, const std::string& message, const char* butto
 }  // namespace chromatron
 
 // ---------------------------------------------------------------------------
-// Linux (Resolve): curl and xdg-open; no native dialog, the OFX host's messages are used.
+// Linux OFX hosts (Resolve and Nuke) use curl and xdg-open, with messages provided by the host.
 // ---------------------------------------------------------------------------
 #elif !defined(__APPLE__)
 

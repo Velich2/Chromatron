@@ -17,7 +17,7 @@
     <key>CFBundleSignature</key>
     <string>FXTC</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>@PROJECT_VERSION@</string>
     <key>LSRequiresCarbon</key>
     <true/>
 </dict>

@@ -1,5 +1,5 @@
 @echo off
-rem Chromatron - Windows build: After Effects (.aex) + OpenFX for Resolve (.ofx.bundle).
+rem Chromatron - Windows build: After Effects / Premiere Pro (.aex) + Resolve / Nuke (.ofx.bundle).
 rem
 rem   build_windows.bat            configure, build Release, run tests, install the plug-ins
 rem                                (run as administrator: writes to Program Files)
@@ -99,17 +99,17 @@ ctest --test-dir "%BUILD_DIR%" -C Release --output-on-failure
 if errorlevel 1 exit /b 1
 
 echo.
-echo After Effects: %BUILD_DIR%\AfterEffects\Chromatron.aex
-echo Resolve (OFX): %BUILD_DIR%\Chromatron.ofx.bundle
+echo After Effects / Premiere Pro: %BUILD_DIR%\AfterEffects\Chromatron.aex
+echo Resolve / Nuke (OFX): %BUILD_DIR%\Chromatron.ofx.bundle
 
 rem --- Install: .aex into Adobe MediaCore, .ofx.bundle into Common Files\OFX\Plugins ---
 if /i "%~1"=="noinstall" exit /b 0
 cmake --install "%BUILD_DIR%" --config Release
 if errorlevel 1 (
     echo ERROR: install failed - run this script as administrator.
-    echo Close After Effects / Resolve if they are running ^(the plug-in file may be locked^).
+    echo Close After Effects / Premiere Pro / Resolve / Nuke if they are running ^(the plug-in file may be locked^).
     exit /b 1
 )
 echo.
-echo Installed. Restart After Effects / Resolve to load the plug-in.
+echo Installed. Restart After Effects / Premiere Pro / Resolve / Nuke to load the plug-in.
 exit /b 0

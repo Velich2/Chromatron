@@ -3,7 +3,7 @@
 This build uses Nuke's OpenFX interface, so it does not require a different NDK binary for each
 Nuke major/minor version. Separate binaries are still needed for Windows, macOS and Linux.
 Compatibility with every Nuke release is not assumed: this integration has not been run inside
-Nuke yet. The SDK-independent tests and the Windows build are verified locally.
+Nuke yet. Core tests and the Windows build are verified locally, and all platform builds pass CI.
 
 ## Installation
 
@@ -18,8 +18,8 @@ Quit Nuke and copy `Chromatron.ofx.bundle` into one OFX directory:
 Alternatively set `OFX_PLUGIN_PATH` to the directory containing the bundle before starting Nuke.
 Keep only one copy of Chromatron visible to Nuke; the shared bundle includes both Nuke and Resolve
 behaviour. Restart and search for Chromatron in the node menu.
-Nuke Non-commercial does not support third-party plug-ins. Other editions remain subject to their
-Foundry licensing restrictions (including Python automation limits in Indie).
+Nuke Indie supports third-party OFX from 12.2v3 onwards. Nuke Non-commercial does not support third-party
+plug-ins. Python automation in Indie is restricted, so use the manual Viewer checks below for that edition.
 
 ## Nuke-specific behaviour
 
@@ -48,8 +48,9 @@ Foundry licensing restrictions (including Python automation limits in Indie).
   If RAM allocation for the GPU output staging copy fails, CPU rendering writes directly into Nuke's output
   image. The input canvas and CPU working buffers still require memory.
   Disable Use GPU to force CPU processing. The extra uploads/downloads can make small images slower on GPU.
-  CUDA requirements match the Windows package (Turing or newer and a compatible CUDA 13 driver); OpenCL can
-  serve supported AMD/Intel GPUs or older NVIDIA devices. Resolve keeps host-provided GPU buffers.
+  The Windows OFX release uses CUDA 12.4, with Pascal and newer architectures and a compatible CUDA 12
+  driver. Linux OFX includes CPU/OpenCL and macOS OFX includes CPU/Metal. OpenCL can serve supported AMD,
+  Intel and NVIDIA GPUs. Resolve uses host-provided GPU buffers when the selected host renderer supports them.
 - **ROI:** processing uses a full input canvas for consistent blur pyramids even if the host requests
   only part of the output. This costs memory on very large bounding boxes.
 
@@ -66,7 +67,7 @@ Run in a separate licensed Nuke process, after installing the bundle:
 Nuke -t smoke.py
 ```
 
-The source script lives at `tests/nuke/smoke.py`; it creates its own graph and checks HDR values,
+The release archive includes `smoke.py`, whose source lives at `tests/nuke/smoke.py`. It creates its own graph and checks HDR values,
 identity, a cropped input, expanded output, transparent edges, all three modes and node recreation.
 If Nuke registers a version-suffixed class, set `CHROMATRON_NUKE_CLASS` to the exact class shown by
 `nuke.selectedNode().Class()` after creating Chromatron manually.
@@ -80,6 +81,8 @@ is not a substitute for the Viewer checks.
 ## References
 
 - [Foundry: loading OFX plug-ins](https://learn.foundry.com/nuke/content/comp_environment/configuring_nuke/loading_ofx_plugins.html)
-- [Foundry: bounding boxes](https://learn.foundry.com/nuke/17.0v2/content/comp_environment/reformatting_elements/adjusting_bbox.html)
+- [Foundry: bounding boxes](https://learn.foundry.com/nuke/content/comp_environment/reformatting_elements/adjusting_bbox.html)
 - [Foundry: Crop](https://learn.foundry.com/nuke/content/reference_guide/transform_nodes/crop.html)
 - [Foundry: native NDK compatibility](https://support.foundry.com/hc/en-us/articles/207353210-Q100234-NDK-plug-in-compatibility-between-different-Nuke-versions)
+- [Foundry: Nuke Indie OFX support](https://www.foundry.com/products/nuke-family/nuke-indie/faq)
+- [Foundry: Non-commercial limitations](https://www.foundry.com/non-commercial-faqs)

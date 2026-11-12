@@ -1,6 +1,6 @@
 name: Release
 
-# Builds the OFX plug-ins and creates a draft GitHub release with them. The After Effects /
+# Builds the OFX plug-ins for Resolve and Nuke and creates a draft GitHub release. The After Effects /
 # Premiere build needs the Adobe SDK, so its zip is added to the draft by hand before publishing.
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release, e.g. 1.2.1 (must match the CMake project version)'
+        description: 'Version to release, e.g. 1.3.0 (must match the CMake project version)'
         required: true
 
 jobs:
@@ -72,7 +72,10 @@ jobs:
             cp -R "artifacts/Chromatron-OFX-$platform/." "$stage/"
             # Artifacts do not keep file modes.
             find "$stage" -name Chromatron.ofx -exec chmod 755 {} +
-            (cd "stage-$platform" && zip -qr "../dist/Chromatron-$VERSION-OFX-$platform.zip" Chromatron.ofx.bundle)
+            cp docs/INSTALL.md "stage-$platform/INSTALL.md"
+            cp docs/NUKE.md "stage-$platform/NUKE.md"
+            cp tests/nuke/smoke.py "stage-$platform/smoke.py"
+            (cd "stage-$platform" && zip -qr "../dist/Chromatron-$VERSION-OFX-$platform.zip" Chromatron.ofx.bundle INSTALL.md NUKE.md smoke.py)
           done
           ls -l dist
       - name: Create or update the draft release
