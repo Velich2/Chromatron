@@ -1,14 +1,15 @@
-# Chromatron 1.3.0 installation
+# Chromatron 1.3.1 installation
 
 Chromatron provides chromatic aberration for After Effects, Premiere Pro, DaVinci Resolve and Nuke.
 Choose the archive for your host and operating system, extract it, close the host and copy the plug-in.
 
 | Host | Archive | Copy | Destination |
 |---|---|---|---|
-| After Effects / Premiere Pro on Windows | `Chromatron-1.3.0-AE-Premiere-Windows.zip` | `Chromatron.aex` | `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore` |
-| Resolve / Nuke on Windows | `Chromatron-1.3.0-OFX-Windows.zip` | `Chromatron.ofx.bundle` | `C:\Program Files\Common Files\OFX\Plugins` |
-| Resolve / Nuke on macOS | `Chromatron-1.3.0-OFX-macOS.zip` | `Chromatron.ofx.bundle` | `/Library/OFX/Plugins` |
-| Resolve / Nuke on Linux | `Chromatron-1.3.0-OFX-Linux.zip` | `Chromatron.ofx.bundle` | `/usr/OFX/Plugins` |
+| After Effects / Premiere Pro on Windows | `Chromatron-1.3.1-AE-Premiere-Windows.zip` | `Chromatron.aex` | `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore` |
+| Resolve / Nuke on Windows | `Chromatron-1.3.1-OFX-Windows.zip` | `Chromatron.ofx.bundle` | `C:\Program Files\Common Files\OFX\Plugins` |
+| Nuke on Windows | `Chromatron-1.3.1-Nuke-Windows.zip` | the same fixed OFX bundle | `C:\Program Files\Common Files\OFX\Nuke` |
+| Resolve / Nuke on macOS | `Chromatron-1.3.1-OFX-macOS.zip` | `Chromatron.ofx.bundle` | `/Library/OFX/Plugins` |
+| Resolve / Nuke on Linux | `Chromatron-1.3.1-OFX-Linux.zip` | `Chromatron.ofx.bundle` | `/usr/OFX/Plugins` |
 
 Copy the complete OFX bundle, including its `Contents` directory. Restart the host after installation.
 System plug-in folders may require administrator permission. The macOS OFX bundle includes arm64 and x86_64.
@@ -16,7 +17,8 @@ System plug-in folders may require administrator permission. The macOS OFX bundl
 Nuke also scans `C:\Program Files\Common Files\OFX\Nuke`, `/Library/OFX/Nuke` and `/usr/OFX/Nuke` on their
 respective systems. Choose one visible location for the bundle. Search for Chromatron in the node menu.
 Nuke Indie supports third-party OFX from 12.2v3 onwards. Nuke Non-commercial cannot load third-party plug-ins.
-Nuke integration has been tested through the shared core, with in-host verification still pending.
+The fixed build was confirmed working by the user in Nuke 15.1v4 on Windows with an RTX 4090.
+When upgrading from 1.3.0, replace an existing shared bundle so Nuke can load the fixed version.
 
 ## GPU and colour setup
 
@@ -31,7 +33,7 @@ Nuke integration has been tested through the shared core, with in-host verificat
   for an ACEScg working space when the host does not expose usable metadata.
 
 The OFX archive includes `NUKE.md` and `smoke.py` for Nuke setup and a separate-process host test.
-The [Nuke instructions](https://github.com/Velich2/Chromatron/blob/v1.3.0/docs/NUKE.md) are also available online.
+The [Nuke instructions](https://github.com/Velich2/Chromatron/blob/v1.3.1/docs/NUKE.md) are also available online.
 Python automation depends on the Nuke edition. The AE/Premiere archive includes this installation guide.
 The full parameter guide and examples are in the [project README](https://github.com/Velich2/Chromatron#readme).
 

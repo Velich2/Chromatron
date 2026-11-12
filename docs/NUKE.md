@@ -2,12 +2,17 @@
 
 This build uses Nuke's OpenFX interface, so it does not require a different NDK binary for each
 Nuke major/minor version. Separate binaries are still needed for Windows, macOS and Linux.
-Compatibility with every Nuke release is not assumed: this integration has not been run inside
-Nuke yet. Core tests and the Windows build are verified locally, and all platform builds pass CI.
+The 1.3.1 compatibility build was confirmed working by the user in Nuke 15.1v4 on Windows with an
+RTX 4090. Core tests run locally and all platform builds pass CI. Other Nuke versions and operating
+systems still need in-host validation.
 
 ## Installation
 
-Quit Nuke and copy `Chromatron.ofx.bundle` into one OFX directory:
+On Windows, download `Chromatron-1.3.1-Nuke-Windows.zip`. The dedicated Nuke archive contains the same
+fixed binary as `Chromatron-1.3.1-OFX-Windows.zip`, with this Nuke guide as `INSTALL.md` and `smoke.py`.
+On macOS and Linux, use the OFX archive for your operating system.
+
+Quit Nuke and copy `Chromatron.ofx.bundle` into one OFX directory.
 
 | OS | Nuke-only folder | Shared with Resolve |
 |---|---|---|
@@ -20,6 +25,17 @@ Keep only one copy of Chromatron visible to Nuke; the shared bundle includes bot
 behaviour. Restart and search for Chromatron in the node menu.
 Nuke Indie supports third-party OFX from 12.2v3 onwards. Nuke Non-commercial does not support third-party
 plug-ins. Python automation in Indie is restricted, so use the manual Viewer checks below for that edition.
+
+## Windows startup compatibility
+
+The Windows 1.3.0 OFX build can crash with MSVC 14.36.32532 DLLs preloaded by Nuke 15.1v4. The
+1.3.1 compatibility build uses Microsoft's legacy mutex constructor, and its regression tests run
+with those exact runtime versions. GPU rendering remains available through the existing private queues.
+
+Replace the complete existing Chromatron bundle when upgrading to 1.3.1. Nuke scans both
+its own OFX folder and the shared Resolve folder, so an older shared copy is also visible to Nuke.
+Keep one visible copy. The separate Nuke Windows archive contains the shared rendering engine and a
+Nuke-specific installation guide. Runtime compatibility is applied to the shared Windows code.
 
 ## Nuke-specific behaviour
 
@@ -86,3 +102,4 @@ is not a substitute for the Viewer checks.
 - [Foundry: native NDK compatibility](https://support.foundry.com/hc/en-us/articles/207353210-Q100234-NDK-plug-in-compatibility-between-different-Nuke-versions)
 - [Foundry: Nuke Indie OFX support](https://www.foundry.com/products/nuke-family/nuke-indie/faq)
 - [Foundry: Non-commercial limitations](https://www.foundry.com/non-commercial-faqs)
+- [Microsoft STL: mutex compatibility with older runtimes](https://github.com/microsoft/STL/issues/4730)

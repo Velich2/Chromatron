@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release, e.g. 1.3.0 (must match the CMake project version)'
+        description: 'Version to release, e.g. 1.3.1 (must match the CMake project version)'
         required: true
 
 jobs:
@@ -77,6 +77,11 @@ jobs:
             cp tests/nuke/smoke.py "stage-$platform/smoke.py"
             (cd "stage-$platform" && zip -qr "../dist/Chromatron-$VERSION-OFX-$platform.zip" Chromatron.ofx.bundle INSTALL.md NUKE.md smoke.py)
           done
+          mkdir stage-Nuke-Windows
+          cp -R stage-Windows/Chromatron.ofx.bundle stage-Nuke-Windows/
+          cp docs/NUKE.md stage-Nuke-Windows/INSTALL.md
+          cp tests/nuke/smoke.py stage-Nuke-Windows/smoke.py
+          (cd stage-Nuke-Windows && zip -qr "../dist/Chromatron-$VERSION-Nuke-Windows.zip" Chromatron.ofx.bundle INSTALL.md smoke.py)
           ls -l dist
       - name: Create or update the draft release
         env:
