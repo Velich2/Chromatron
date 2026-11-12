@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Chromatron VERSION 1.3.0 LANGUAGES C CXX)
+project(Chromatron VERSION 1.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -126,6 +126,10 @@ if(CHROMATRON_WITH_METAL)
 endif()
 
 if(MSVC)
+    # Older hosts such as Nuke 15.1 preload MSVCP140 14.36. Use the runtime mutex
+    # initialiser supported by that DLL instead of the newer constexpr layout.
+    # PUBLIC also covers the OFX Support sources compiled in the plug-in module.
+    target_compile_definitions(chromatron_core PUBLIC _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
     target_compile_options(chromatron_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W3 /fp:fast>)
 else()
     target_compile_options(chromatron_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)

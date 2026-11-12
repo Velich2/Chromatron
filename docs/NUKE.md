@@ -21,6 +21,17 @@ behaviour. Restart and search for Chromatron in the node menu.
 Nuke Indie supports third-party OFX from 12.2v3 onwards. Nuke Non-commercial does not support third-party
 plug-ins. Python automation in Indie is restricted, so use the manual Viewer checks below for that edition.
 
+## Windows startup compatibility
+
+The Windows 1.3.0 OFX build can crash with MSVC 14.36.32532 DLLs preloaded by Nuke 15.1v4. The
+1.3.1 compatibility build uses Microsoft's legacy mutex constructor, and its regression tests run
+with those exact runtime versions. GPU rendering remains available through the existing private queues.
+
+Replace the complete existing Chromatron bundle when testing the compatibility build. Nuke scans both
+its own OFX folder and the shared Resolve folder, so an older shared copy is also visible to Nuke.
+Keep one visible copy. The separate Nuke test archive contains the shared rendering engine and a
+Nuke-specific installation guide. Runtime compatibility is applied to the shared Windows code.
+
 ## Nuke-specific behaviour
 
 - **Colour:** Auto first honours usable OpenFX clip colour metadata. Without metadata it chooses
@@ -86,3 +97,4 @@ is not a substitute for the Viewer checks.
 - [Foundry: native NDK compatibility](https://support.foundry.com/hc/en-us/articles/207353210-Q100234-NDK-plug-in-compatibility-between-different-Nuke-versions)
 - [Foundry: Nuke Indie OFX support](https://www.foundry.com/products/nuke-family/nuke-indie/faq)
 - [Foundry: Non-commercial limitations](https://www.foundry.com/non-commercial-faqs)
+- [Microsoft STL: mutex compatibility with older runtimes](https://github.com/microsoft/STL/issues/4730)

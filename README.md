@@ -45,6 +45,8 @@ OpenCL tries each GPU until its kernels build successfully. If the additional GP
 in RAM, processing falls back to CPU and writes directly into Nuke's output image.
 See [Nuke installation, colour setup and testing](docs/NUKE.md). Nuke is not installed on the development
 machine, so in-host compatibility remains unverified. Nuke Non-commercial cannot load third-party plug-ins.
+Windows 1.3.1 includes a mutex compatibility fix for the MSVC runtime bundled with Nuke 15.1v4.
+The Windows tests also run with that exact runtime. See the [startup compatibility notes](docs/NUKE.md#windows-startup-compatibility).
 
 ## Modes
 The examples are rendered with `chromatron_cli` from its synthetic test frame (1920×1080); each caption gives the

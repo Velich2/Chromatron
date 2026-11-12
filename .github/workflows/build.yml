@@ -47,6 +47,8 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure -V
+      - name: Test with Nuke 15.1 MSVC runtime
+        run: ./tests/windows/legacy-runtime.ps1 -TestExecutable build/Release/chromatron_tests.exe
       - uses: actions/upload-artifact@v4
         with:
           name: Chromatron-OFX-Windows
