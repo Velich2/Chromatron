@@ -15,18 +15,26 @@ close the host and copy them:
 | DaVinci Resolve (Windows) | `Chromatron.ofx.bundle` | `C:\Program Files\Common Files\OFX\Plugins` |
 | DaVinci Resolve (macOS) | `Chromatron.ofx.bundle` | `/Library/OFX/Plugins` |
 | DaVinci Resolve (Linux) | `Chromatron.ofx.bundle` | `/usr/OFX/Plugins` |
+| Nuke (Windows) | the same OFX bundle | `C:\Program Files\Common Files\OFX\Nuke` |
+| Nuke (macOS) | the same OFX bundle | `/Library/OFX/Nuke` |
+| Nuke (Linux) | the same OFX bundle | `/usr/OFX/Nuke` |
+
+Nuke also scans the shared OFX folders listed for Resolve. Keep one visible copy of the bundle.
+The OFX archives include `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` test script.
 
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
 published yet: it has to be built on a Mac with the After Effects SDK (see [Building](#building)).
 
-GPU rendering with CUDA needs an NVIDIA GPU from the Turing generation (GTX 16xx, RTX 20xx) or newer and
-driver R580 or newer. On older NVIDIA GPUs or drivers the effect renders on the CPU automatically; OpenCL and
-Metal have no such limit.
+The Windows After Effects / Premiere package uses CUDA 13.4 and requires Turing (GTX 16xx, RTX 20xx) or newer
+with driver R580 or newer. The Windows OFX package for Resolve and Nuke uses CUDA 12.4 and includes Pascal
+(GTX 10xx) and newer architectures, with a compatible CUDA 12 driver. Linux OFX provides CPU and OpenCL;
+macOS OFX provides CPU and Metal. Nuke tries OpenCL if CUDA is unavailable, then CPU. In other hosts,
+GPU availability also depends on the host's selected renderer. Disabling Use GPU forces CPU rendering.
 
 ### Updates
 The installed version and a **Check for Updates** button are in the effect's **Options** button next to the effect
 name in After Effects (**Setup** in Premiere Pro) and in the **About Chromatron** button at the top of the panel in
-Resolve. The check asks GitHub for the latest release only when you press the button and offers to open the download
+Resolve and Nuke. The check asks GitHub for the latest release only when you press the button and offers to open the download
 page when a newer version exists; nothing is installed automatically and nothing else is sent.
 
 ## Nuke
@@ -134,7 +142,7 @@ Whole frame, `--mode abr --lateral 24`:
 | Fringe Saturation | strength of the fringe colour, independent of its width: 0 – no colour, 100 % – natural, 200 % – vivid |
 | Fringe Blur | softens the colour of the fringes, px; luminance and image detail stay sharp, and so do colour edges in the picture itself (only the fringe is blurred). At values close to the fringe width the colour turns grey. Not available in Physical Lens, where Axial Color is the defocus |
 | Mix | blend with the original |
-| Use GPU | render on the GPU when the host provides one; off – on the CPU |
+| Use GPU | use an available GPU. Nuke uploads CPU images to a private GPU queue and falls back to CPU on failure. Disable for CPU rendering |
 | Color Space | encoding of the input (see below), the last parameter in the list |
 
 Highlight Boost on an SDR source: the synthetic frame saved as 8-bit, so the sky is clipped at white
@@ -169,7 +177,7 @@ The optics always run on **linear light**. The *Color Space* parameter:
 
 | Value | Processing |
 |---|---|
-| **Auto** (default; the last item in AE and in hosts that do not reorder lists) | Resolve/OFX: the colour space the host reports for the clip (OpenFX colour management), otherwise *Rec.709 Gamma 2.4*. After Effects: 32 bpc → *Linear*, 8/16 bpc → *sRGB*. Premiere Pro: *Rec.709 Gamma 2.4* |
+| **Auto** (default; the last item in AE and in hosts that do not reorder lists) | OFX uses reported clip colour metadata. The fallback is *Linear (Rec.709 primaries)* in Nuke and *Rec.709 Gamma 2.4* in Resolve and other OFX hosts. After Effects uses *Linear* at 32 bpc and *sRGB* at 8/16 bpc. Premiere Pro uses *Rec.709 Gamma 2.4* |
 | Linear (Rec.709 primaries) | as is |
 | sRGB / Rec.709 Gamma 2.4 (BT.1886) | decode → linear Rec.709 → back (BT.1886 with zero black = power 2.4) |
 | Rec.709 (Scene) | inverse BT.709 camera curve → linear Rec.709 → back |
@@ -189,17 +197,20 @@ In Resolve: ACES project → *ACEScct*; DaVinci YRGB Color Managed with a wide g
 Intermediate timeline) → *DaVinci Wide Gamut / Intermediate*; DaVinci YRGB without colour management →
 *Rec.709 Gamma 2.4* (default); timeline or clip in "Rec.709 (Scene)" → *Rec.709 (Scene)*.
 In After Effects: 8/16 bpc without linearisation → *sRGB*, linearised 32 bpc → *Linear*, OCIO/ACES → *ACEScg*.
+In Nuke, choose *ACEScg* explicitly for an ACEScg working space when the host exposes no usable metadata.
+Auto otherwise assumes linear Rec.709. The Viewer display transform does not define the input encoding.
 
 ## How it works
 ```
 src/kernels/ChromatronKernels.h   single-source kernels: C++ / CUDA / OpenCL C / Metal
 src/core/                         model: settings → spectral taps, blur pyramid, mask; pass sequence
 src/backends/                     CPU (std::thread), CUDA (stream), OpenCL (cl_mem), Metal (MTLBuffer)
-src/ofx/                          OpenFX plug-in (Resolve): CPU/CUDA/OpenCL/Metal as the host chooses
+src/ofx/                          OpenFX plug-in for Resolve and Nuke; host GPU buffers or private GPU queues
 src/ae/                           After Effects: SmartFX, 8/16/32 bpc, GPU through PF_Cmd_SMART_RENDER_GPU;
                                   Premiere Pro: PF_Cmd_RENDER (BGRA 8u/32f on the CPU) and the xGPUFilterEntry GPU filter
 tools/chromatron_cli.cpp          renders PPM/PFM through the same pipeline
-tests/test_core.cpp               model invariants and OpenCL ↔ CPU parity
+tests/test_core.cpp               model invariants, Nuke geometry and CPU/CUDA/OpenCL/Metal parity
+tests/nuke/smoke.py               checks the OFX node in a separate licensed Nuke process
 ```
 Passes per frame: import (colour decode, Highlight Boost expansion) → blur pyramid (Gaussian levels a factor of 2
 apart, stored at half, quarter… resolution from 1.5 px of blur) → (mask: luminance →
@@ -209,7 +220,7 @@ Saturation) → highlight compression and encode back.
 ## Building
 Requires CMake ≥ 3.20 and C++17.
 
-**Resolve / OFX** (Windows, macOS, Linux):
+**Resolve / Nuke / OFX** (Windows, macOS, Linux):
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
@@ -224,8 +235,8 @@ C++*, Git, optionally the CUDA Toolkit). The script finds Visual Studio and the 
 rendering in Premiere (default `C:\Users\Velich\Premiere_Pro_24.0_C++_Win_SDK`, override with `PR_SDK_ROOT`;
 without it Premiere renders the effect on the CPU). It builds AE and OFX in Release, runs the tests and installs
 the plug-ins: `Chromatron.aex` into `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore`, `Chromatron.ofx.bundle`
-into `C:\Program Files\Common Files\OFX\Plugins`. Run it from an administrator console with After Effects,
-Premiere and Resolve closed:
+into `C:\Program Files\Common Files\OFX\Plugins`, shared by Resolve and Nuke. Run it from an administrator
+console with After Effects, Premiere Pro, Resolve and Nuke closed:
 ```
 build_windows.bat              :: build + tests + install
 build_windows.bat noinstall    :: build and tests only
@@ -252,15 +263,18 @@ build/chromatron_cli --synthetic 1920x1080 out.ppm --mode phys --correction achr
 
 ## CI
 GitHub Actions (`.github/workflows/build.yml`) builds and tests every PR on Linux (CPU + OpenCL on pocl), Windows
-(CPU + CUDA + OpenCL) and macOS (CPU + Metal, universal). The OFX bundles for each platform are in the run
+(CPU + CUDA + OpenCL) and macOS (CPU + Metal, universal). The OFX bundles for Resolve and Nuke are in the run
 artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the repository.
 
 ### Releasing
 1. Set the version in `CMakeLists.txt` (`project(... VERSION x.y.z)`), `kMajor` / `kMinor` / `kBug` in
-   `src/ae/ChromatronAE.cpp` and `AE_Effect_Version` in `src/ae/ChromatronAE_PiPL.r`, and merge it.
+   `src/ae/ChromatronAE.cpp`, `AE_Effect_Version` in `src/ae/ChromatronAE_PiPL.r` and the OFX major/minor
+   version in `src/ofx/ChromatronOFX.cpp`. Update the package names in `docs/INSTALL.md` and merge it.
 2. Run the **Release** workflow (Actions → Release → Run workflow, version `x.y.z`) or push a tag `vx.y.z`. It
-   builds and tests the OFX plug-ins and creates a draft release with `Chromatron-x.y.z-OFX-<platform>.zip`.
-3. Build the After Effects / Premiere plug-in with `build_windows.bat`, add `Chromatron.aex` to the draft as
+   builds and tests the Resolve/Nuke OFX plug-ins and creates a draft with `Chromatron-x.y.z-OFX-<platform>.zip`.
+   Each archive includes the bundle, `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` script.
+3. Build the After Effects / Premiere plug-in with `build_windows.bat noinstall`, package `Chromatron.aex`
+   with `INSTALL.md` and add it to the draft as
    `Chromatron-x.y.z-AE-Premiere-Windows.zip`, write the release notes and publish. The **Check for Updates**
    button finds the release once it is published.
 
@@ -271,3 +285,6 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
 * Premiere Pro (Windows): CPU rendering and the GPU filter checked.
 * DaVinci Resolve (Windows): checked. The macOS and Linux bundles build and pass the tests in CI; they have not
   been checked inside Resolve on those systems yet.
+* Nuke: the OFX integration is included on all three platforms. Geometry, linear defaults and private GPU
+  rendering are covered by core tests. In-host registration and rendering remain unverified because Nuke
+  is unavailable on the development machine. See [Nuke setup and smoke test](docs/NUKE.md).

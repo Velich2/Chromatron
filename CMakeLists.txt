@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Chromatron VERSION 1.2.1 LANGUAGES C CXX)
+project(Chromatron VERSION 1.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,7 +14,7 @@ if(APPLE)
     endif()
 endif()
 
-option(CHROMATRON_BUILD_OFX "Build the OpenFX plug-in (DaVinci Resolve)" ON)
+option(CHROMATRON_BUILD_OFX "Build the OpenFX plug-in (DaVinci Resolve and Nuke)" ON)
 option(CHROMATRON_BUILD_AE "Build the After Effects plug-in (needs AE_SDK_DIR)" OFF)
 option(CHROMATRON_BUILD_TOOLS "Build the command-line renderer and tests" ON)
 

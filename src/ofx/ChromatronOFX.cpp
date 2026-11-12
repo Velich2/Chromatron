@@ -1,4 +1,4 @@
-// Chromatron - OpenFX plug-in (DaVinci Resolve and other OFX hosts).
+// Chromatron - OpenFX plug-in (DaVinci Resolve, Nuke and other OFX hosts).
 // CPU, CUDA, OpenCL (buffers) and Metal rendering through the shared pipeline.
 
 #include "core/About.h"
@@ -19,10 +19,10 @@
 #define kPluginDescription                                                                                  \
     "Optical chromatic aberration. RGB Separation pushes a colour pair apart; Lens Aberration adds "       \
     "lateral colour with clean warm/cool fringes; Physical Lens models glass dispersion with lateral "     \
-    "and axial colour."
+    "and axial colour. OpenFX integration for DaVinci Resolve and Nuke, with CPU and GPU rendering."
 #define kPluginIdentifier "com.chromatron.Chromatron"
 #define kPluginVersionMajor 1
-#define kPluginVersionMinor 2
+#define kPluginVersionMinor 3
 
 namespace {
 
@@ -652,7 +652,8 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
 
     BooleanParamDescriptor* useGpu = desc.defineBooleanParam(kUseGpu);
     useGpu->setLabels("Use GPU", "Use GPU", "Use GPU");
-    useGpu->setHint("Render on the GPU when the host provides one. Off: render on the CPU.");
+    useGpu->setHint("Render with an available CUDA, OpenCL or Metal GPU. Nuke uploads host images to a private "
+                    "GPU queue and falls back to CPU if the GPU attempt fails. Disable to render on CPU.");
     useGpu->setDefault(true);
     useGpu->setAnimates(false);
     page->addChild(*useGpu);
