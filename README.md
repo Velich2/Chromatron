@@ -21,6 +21,8 @@ close the host and copy them:
 
 Nuke also scans the shared OFX folders listed for Resolve. Keep one visible copy of the bundle.
 The OFX archives include `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` test script.
+Windows also has a dedicated `Chromatron-1.3.1-Nuke-Windows.zip` download with Nuke setup instructions
+and the same fixed binary as the Windows OFX archive. Replace an older shared copy when upgrading.
 
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
 published yet: it has to be built on a Mac with the After Effects SDK (see [Building](#building)).
@@ -43,8 +45,8 @@ project format, expanded bounding boxes and transparent-black input padding. Use
 private CUDA/OpenCL/Metal queue, uploading Nuke's CPU buffers and downloading the result; CPU is the fallback.
 OpenCL tries each GPU until its kernels build successfully. If the additional GPU output copy cannot fit
 in RAM, processing falls back to CPU and writes directly into Nuke's output image.
-See [Nuke installation, colour setup and testing](docs/NUKE.md). Nuke is not installed on the development
-machine, so in-host compatibility remains unverified. Nuke Non-commercial cannot load third-party plug-ins.
+See [Nuke installation, colour setup and testing](docs/NUKE.md). The fixed build was confirmed working
+by the user in Nuke 15.1v4 on Windows with an RTX 4090. Nuke Non-commercial cannot load third-party plug-ins.
 Windows 1.3.1 includes a mutex compatibility fix for the MSVC runtime bundled with Nuke 15.1v4.
 The Windows tests also run with that exact runtime. See the [startup compatibility notes](docs/NUKE.md#windows-startup-compatibility).
 
@@ -275,6 +277,8 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
 2. Run the **Release** workflow (Actions → Release → Run workflow, version `x.y.z`) or push a tag `vx.y.z`. It
    builds and tests the Resolve/Nuke OFX plug-ins and creates a draft with `Chromatron-x.y.z-OFX-<platform>.zip`.
    Each archive includes the bundle, `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` script.
+   The dedicated `Chromatron-x.y.z-Nuke-Windows.zip` contains the same Windows binary with the Nuke
+   guide as `INSTALL.md` and `smoke.py`.
 3. Build the After Effects / Premiere plug-in with `build_windows.bat noinstall`, package `Chromatron.aex`
    with `INSTALL.md` and add it to the draft as
    `Chromatron-x.y.z-AE-Premiere-Windows.zip`, write the release notes and publish. The **Check for Updates**
@@ -287,6 +291,6 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
 * Premiere Pro (Windows): CPU rendering and the GPU filter checked.
 * DaVinci Resolve (Windows): checked. The macOS and Linux bundles build and pass the tests in CI; they have not
   been checked inside Resolve on those systems yet.
-* Nuke: the OFX integration is included on all three platforms. Geometry, linear defaults and private GPU
-  rendering are covered by core tests. In-host registration and rendering remain unverified because Nuke
-  is unavailable on the development machine. See [Nuke setup and smoke test](docs/NUKE.md).
+* Nuke 15.1v4 (Windows, RTX 4090): the user confirmed the 1.3.1 compatibility build works. Geometry,
+  linear defaults, private GPU rendering and the bundled MSVC runtime are covered by automated tests.
+  Other Nuke versions and operating systems still need in-host validation. See [Nuke setup](docs/NUKE.md).

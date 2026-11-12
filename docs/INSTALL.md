@@ -7,6 +7,7 @@ Choose the archive for your host and operating system, extract it, close the hos
 |---|---|---|---|
 | After Effects / Premiere Pro on Windows | `Chromatron-1.3.1-AE-Premiere-Windows.zip` | `Chromatron.aex` | `C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore` |
 | Resolve / Nuke on Windows | `Chromatron-1.3.1-OFX-Windows.zip` | `Chromatron.ofx.bundle` | `C:\Program Files\Common Files\OFX\Plugins` |
+| Nuke on Windows | `Chromatron-1.3.1-Nuke-Windows.zip` | the same fixed OFX bundle | `C:\Program Files\Common Files\OFX\Nuke` |
 | Resolve / Nuke on macOS | `Chromatron-1.3.1-OFX-macOS.zip` | `Chromatron.ofx.bundle` | `/Library/OFX/Plugins` |
 | Resolve / Nuke on Linux | `Chromatron-1.3.1-OFX-Linux.zip` | `Chromatron.ofx.bundle` | `/usr/OFX/Plugins` |
 
@@ -16,7 +17,8 @@ System plug-in folders may require administrator permission. The macOS OFX bundl
 Nuke also scans `C:\Program Files\Common Files\OFX\Nuke`, `/Library/OFX/Nuke` and `/usr/OFX/Nuke` on their
 respective systems. Choose one visible location for the bundle. Search for Chromatron in the node menu.
 Nuke Indie supports third-party OFX from 12.2v3 onwards. Nuke Non-commercial cannot load third-party plug-ins.
-Nuke integration has been tested through the shared core, with in-host verification still pending.
+The fixed build was confirmed working by the user in Nuke 15.1v4 on Windows with an RTX 4090.
+When upgrading from 1.3.0, replace an existing shared bundle so Nuke can load the fixed version.
 
 ## GPU and colour setup
 
