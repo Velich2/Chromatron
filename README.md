@@ -47,8 +47,8 @@ Premiere's CPU renderer use the host's downsample fractions; Resolve and Nuke us
 The optical centre stays relative to the full clip frame in Resolve and the project format in Nuke,
 independent of tiles or moving data windows. Resampling can still change fine edge detail.
 
-The Premiere export correction in 1.3.2 has automated geometry and image-comparison coverage;
-in-host UHD-to-720p export validation is pending.
+The user confirmed that the 1.3.2 test build fixes the reported Premiere export issue.
+Geometry and image-comparison tests also cover scaling in all three effect modes.
 
 ## Nuke
 The same OFX bundle has a Nuke profile: scene-linear colour by default, an optical axis relative to
@@ -309,7 +309,8 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
 * Kernels and the CPU and OpenCL backends are covered by tests (OpenCL matches the CPU, float and 16-bit float
   frames, all three modes with and without the look controls); CI runs them on Linux, Windows and macOS.
 * After Effects 2026 (Windows): rendering checked (CPU path, scripted renders).
-* Premiere Pro (Windows): CPU rendering and the GPU filter checked.
+* Premiere Pro (Windows): CPU rendering and the GPU filter checked. The user confirmed the 1.3.2
+  correction for the reported UHD-to-720p export scaling issue.
 * DaVinci Resolve (Windows): checked. The macOS and Linux bundles build and pass the tests in CI; they have not
   been checked inside Resolve on those systems yet.
 * Nuke 15.1v4 (Windows, RTX 4090): the user confirmed the 1.3.1 compatibility build works. Geometry,
