@@ -35,8 +35,8 @@ inline Pixels pixelRect(Rect r, double sx, double sy, double par)
     return {(int)v[0], (int)v[1], (int)v[2], (int)v[3]};
 }
 
-// Nuke's data window may move independently of the format. Only the format sets the optical axis.
-inline Geometry nukeGeometry(Rect format, Pixels canvas, Pixels destination, Pixels window,
+// Canonical frame bounds define the optical axis independently of the working canvas and render window.
+inline Geometry frameGeometry(Rect format, Pixels canvas, Pixels destination, Pixels window,
                              double sx, double sy, double par, double cx, double cy)
 {
     Geometry g;

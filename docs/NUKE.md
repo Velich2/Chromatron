@@ -8,8 +8,8 @@ systems still need in-host validation.
 
 ## Installation
 
-On Windows, download `Chromatron-1.3.1-Nuke-Windows.zip`. The dedicated Nuke archive contains the same
-fixed binary as `Chromatron-1.3.1-OFX-Windows.zip`, with this Nuke guide as `INSTALL.md` and `smoke.py`.
+On Windows, download `Chromatron-1.3.2-Nuke-Windows.zip`. The dedicated Nuke archive contains the same
+fixed binary as `Chromatron-1.3.2-OFX-Windows.zip`, with this Nuke guide as `INSTALL.md` and `smoke.py`.
 On macOS and Linux, use the OFX archive for your operating system.
 
 Quit Nuke and copy `Chromatron.ofx.bundle` into one OFX directory.
@@ -32,7 +32,7 @@ The Windows 1.3.0 OFX build can crash with MSVC 14.36.32532 DLLs preloaded by Nu
 1.3.1 compatibility build uses Microsoft's legacy mutex constructor, and its regression tests run
 with those exact runtime versions. GPU rendering remains available through the existing private queues.
 
-Replace the complete existing Chromatron bundle when upgrading to 1.3.1. Nuke scans both
+Replace the complete existing Chromatron bundle when upgrading from an older version. Nuke scans both
 its own OFX folder and the shared Resolve folder, so an older shared copy is also visible to Nuke.
 Keep one visible copy. The separate Nuke Windows archive contains the shared rendering engine and a
 Nuke-specific installation guide. Runtime compatibility is applied to the shared Windows code.

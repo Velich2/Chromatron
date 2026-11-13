@@ -6,6 +6,7 @@
 // back to PF_Cmd_RENDER in ChromatronAE.cpp.
 
 #include "ChromatronParams.h"
+#include "RenderScale.h"
 
 // PrSDKTypes.h defines NOMINMAX itself before including <windows.h>.
 #ifdef NOMINMAX
@@ -15,6 +16,7 @@
 #include "AE_Effect.h"
 #include "PrSDKAESupport.h"  // PF_TransitionSuite, used by PrGPUFilterModule.h
 #include "PrGPUFilterModule.h"
+#include "PrSDKSequenceInfoSuite.h"
 
 #include <cmath>
 #include <exception>
@@ -125,12 +127,12 @@ public:
         g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
         g.hostFormat = half ? CK_HOST_HALF : CK_HOST_FLOAT;
         g.premultiplied = false;  // straight alpha, like the BGRA_4444 CPU formats
-        g.renderScale = inRenderParams->inDownsampleFactorX > 0.0f ? inRenderParams->inDownsampleFactorX : 1.0;
         g.centerX = inputs.centerX;
         g.centerY = inputs.centerY;
         g.halfDiagonal = 0.5 * std::hypot((double)width, (double)height);
 
         try {
+            g.renderScale = RenderScale(*inRenderParams);
             std::unique_ptr<cx::Backend> backend = makeBackend();
             const cx::Plan plan = cx::buildPlan(PremiereSettings(inputs), g);
             if (inputs.useGpu) {
@@ -147,6 +149,22 @@ public:
     }
 
 private:
+    double RenderScale(const PrGPUFilterRenderParams& params)
+    {
+        // GetFrameRect is available in version 1, including older supported Premiere hosts.
+        constexpr int suiteVersion = 1;
+        const PrSDKSequenceInfoSuite* sequence = nullptr;
+        auto* basic = mSuites->utilFuncs->getSPBasicSuite();
+        double sequenceWidth = 0.0;
+        if (basic->AcquireSuite(kPrSDKSequenceInfoSuite, suiteVersion, (const void**)&sequence) == 0 && sequence) {
+            prRect frame = {};
+            const auto status = sequence->GetFrameRect(mTimelineID, &frame);
+            basic->ReleaseSuite(kPrSDKSequenceInfoSuite, suiteVersion);
+            if (PrSuiteErrorSucceeded(status)) sequenceWidth = (double)frame.right - frame.left;
+        }
+        return PremiereRenderScale(params.inDownsampleFactorX, params.inRenderWidth, sequenceWidth);
+    }
+
     std::unique_ptr<cx::Backend> makeBackend()
     {
         switch (mDeviceInfo.outDeviceFramework) {

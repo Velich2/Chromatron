@@ -271,7 +271,7 @@ private:
                                 {sb.x1, sb.y1, sb.x2, sb.y2}, src ? src->getRowBytes() : 0, canvas, packed);
         double x = 0.5, y = 0.5;
         center_->getValueAtTime(args.time, x, y);
-        auto g = cx::ofx::nukeGeometry(nukeFormat(), canvas, {db.x1, db.y1, db.x2, db.y2},
+        auto g = cx::ofx::frameGeometry(nukeFormat(), canvas, {db.x1, db.y1, db.x2, db.y2},
                                       {rw.x1, rw.y1, rw.x2, rw.y2}, sx, sy, par, x, y);
         g.dstPitch = dst.getRowBytes() / (int)sizeof(float);
         g.premultiplied = src_->getPreMultiplication() == eImagePreMultiplied;
@@ -392,30 +392,17 @@ void ChromatronPlugin::render(const RenderArguments& args)
     const OfxRectI& rw = args.renderWindow;
     const double rs = args.renderScale.x;
 
-    cx::Geometry g;
-    g.srcWidth = sb.x2 - sb.x1;
-    g.srcHeight = sb.y2 - sb.y1;
-    g.srcPitch = src->getRowBytes() / (int)sizeof(float);
-    g.dstWidth = rw.x2 - rw.x1;
-    g.dstHeight = rw.y2 - rw.y1;
-    g.dstPitch = dst->getRowBytes() / (int)sizeof(float);
-    g.dstBaseX = rw.x1 - db.x1;
-    g.dstBaseY = rw.y1 - db.y1;
-    g.dstOffsetX = rw.x1 - sb.x1;
-    g.dstOffsetY = rw.y1 - sb.y1;
-    g.renderScale = rs;
-    if (g.srcWidth <= 0 || g.srcHeight <= 0 || g.dstWidth <= 0 || g.dstHeight <= 0) return;
-
     // Optical centre and field size come from the clip's full frame, not from the tile.
     const OfxRectD rod = src_->getRegionOfDefinition(args.time);
     const double par = src_->getPixelAspectRatio() > 0.0 ? src_->getPixelAspectRatio() : 1.0;
-    const double fx1 = rod.x1 * rs / par, fx2 = rod.x2 * rs / par;
-    const double fy1 = rod.y1 * rs, fy2 = rod.y2 * rs;
     double cxn = 0.5, cyn = 0.5;
     center_->getValueAtTime(args.time, cxn, cyn);
-    g.centerX = fx1 + cxn * (fx2 - fx1) - sb.x1 - 0.5;
-    g.centerY = fy1 + cyn * (fy2 - fy1) - sb.y1 - 0.5;
-    g.halfDiagonal = 0.5 * std::hypot(fx2 - fx1, fy2 - fy1);
+    auto g = cx::ofx::frameGeometry({rod.x1, rod.y1, rod.x2, rod.y2}, {sb.x1, sb.y1, sb.x2, sb.y2},
+                                   {db.x1, db.y1, db.x2, db.y2}, {rw.x1, rw.y1, rw.x2, rw.y2},
+                                   rs, args.renderScale.y, par, cxn, cyn);
+    g.srcPitch = src->getRowBytes() / (int)sizeof(float);
+    g.dstPitch = dst->getRowBytes() / (int)sizeof(float);
+    if (g.srcWidth <= 0 || g.srcHeight <= 0 || g.dstWidth <= 0 || g.dstHeight <= 0) return;
     g.premultiplied = src_->getPreMultiplication() == eImagePreMultiplied;
 
     try {

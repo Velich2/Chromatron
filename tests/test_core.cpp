@@ -3,6 +3,7 @@
 #include "core/About.h"
 #include "core/Chromatron.h"
 #include "ofx/HostPolicy.h"
+#include "ae/RenderScale.h"
 
 #if CHROMATRON_HAS_OPENCL
 #ifdef _WIN32
@@ -1003,6 +1004,7 @@ bool testPrivateGpuBackend(const char* name, bool (*deviceAvailable)(), std::uni
             g.dstPitch = g.dstWidth * 4;
             g.dstOffsetX = 5;
             g.dstOffsetY = 3;
+            if (run >= 3) g.renderScale = 1.0/3.0;
             const auto ref = runCpu(s, g, f.px);
             std::vector<float> out(ref.size(), -123.0f);
             const Plan plan = buildPlan(s, g);
@@ -1065,6 +1067,7 @@ void testPrivateGpu()
         g.dstPitch = g.dstWidth * 4;
         g.dstOffsetX = 5;
         g.dstOffsetY = 3;
+        if (run >= 3) g.renderScale = 1.0/3.0;
         const auto ref = runCpu(s, g, f.px);
         out.assign(ref.size(), -123.0f);
         const bool rendered = renderOnPrivateGpu(buildPlan(s, g), f.px.data(), out.data(), backend);
@@ -1212,6 +1215,103 @@ void testMetal()
 }
 #endif
 
+void testRenderScaling()
+{
+    using chromatron::ae::PremiereRenderScale;
+    expect(std::fabs(PremiereRenderScale(1.0, 1280, 3840) - 1.0/3.0) < 1e-9 &&
+               PremiereRenderScale(0.5, 3840, 3840) == 0.5 &&
+               std::fabs(PremiereRenderScale(0.5, 1280, 3840) - 1.0/6.0) < 1e-9 &&
+               PremiereRenderScale(1.0, 3840, 1920) == 2.0,
+           "Premiere combines sequence/export size with preview downsampling");
+    expect(PremiereRenderScale(0.25, 0, 3840) == 0.25 &&
+               PremiereRenderScale(0.5, 1280, 0) == 0.5 &&
+               PremiereRenderScale(std::numeric_limits<double>::quiet_NaN(), 1280, 3840) == 1.0/3.0,
+           "Premiere falls back to a valid preview scale when sequence metadata is unavailable");
+
+    namespace host = chromatron::ofx;
+    Settings s;
+    s.space = ColorSpace::LinearRec709;
+    s.distance = 18;
+    s.angleDeg = 17;
+    s.spread = 0;
+    s.lateral = s.lateralColor = 1.5;
+    s.axialColor = 3;
+    s.channelBlur = 6;
+    s.threshold = 0.1;
+    const host::Rect frame{0,0,3840,2160};
+    const auto full = host::frameGeometry(frame, {0,0,3840,2160}, {0,0,3840,2160}, {0,0,3840,2160},
+                                         1,1,1,0.63,0.41);
+    for (Mode mode : {Mode::Separation, Mode::Aberration, Mode::Physical}) {
+        s.mode = mode;
+        const Plan reference = buildPlan(s, full);
+        for (double scale : {0.5, 1.0/3.0, 0.25, 2.0}) {
+            const int width = (int)std::lround(3840*scale), height = (int)std::lround(2160*scale);
+            const host::Pixels pixels{0,0,width,height};
+            const auto g = host::frameGeometry(frame, pixels, pixels, pixels, scale,scale,1,0.63,0.41);
+            const Plan reduced = buildPlan(s, g);
+            bool consistent = std::fabs((g.centerX+0.5) - (full.centerX+0.5)*scale) < 1e-8 &&
+                              std::fabs((g.centerY+0.5) - (full.centerY+0.5)*scale) < 1e-8 &&
+                              std::fabs(g.halfDiagonal-full.halfDiagonal*scale) < 1e-8 &&
+                              reduced.params.numTaps == reference.params.numTaps &&
+                              std::fabs(reduced.params.radialScale-reference.params.radialScale) < 1e-6 &&
+                              std::fabs(reduced.params.dirX-reference.params.dirX*scale) < 1e-6 &&
+                              std::fabs(reduced.detectSigma-reference.detectSigma*scale) < 1e-5;
+            for (int tap = 0; tap < reference.params.numTaps && consistent; ++tap) {
+                consistent &= std::fabs(reduced.params.tapSigma[tap]-reference.params.tapSigma[tap]*scale) < 1e-5;
+                consistent &= std::fabs(reduced.params.tapSigmaAxial[tap]-reference.params.tapSigmaAxial[tap]*scale) < 1e-5;
+            }
+            char label[120];
+            std::snprintf(label,sizeof(label),"host geometry and spatial parameters scale together, mode %d at %.3g",
+                          (int)mode,scale);
+            expect(consistent,label);
+        }
+    }
+    const auto nonuniform = host::frameGeometry(frame, {0,0,1920,540}, {0,0,1920,540}, {0,0,1920,540},
+                                               0.5,0.25,1,0.63,0.41);
+    expect(std::fabs(nonuniform.centerY-(2160*0.25*0.41-0.5)) < 1e-9,
+           "OFX maps the vertical optical centre with the vertical render scale");
+
+    auto chart = [](int w, int h) {
+        return makeFrame(w,h,[=](int x,int y,float* pixel) {
+            const double u = (x+0.5)/w, v = (y+0.5)/h;
+            const double light = std::exp(-std::pow((u-0.72)/0.06,2)) *
+                                 std::exp(-std::pow((v-0.46)/0.3,2));
+            pixel[0] = (float)(0.1+0.8*light);
+            pixel[1] = (float)(0.15+0.5*light);
+            pixel[2] = (float)(0.2+0.3*light);
+            pixel[3] = 1.0f;
+        });
+    };
+    const Frame large = chart(480,270), small = chart(160,90);
+    const host::Rect testFormat{0,0,480,270};
+    const auto largeGeometry = host::frameGeometry(testFormat, {0,0,480,270}, {0,0,480,270}, {0,0,480,270},
+                                                  1,1,1,0.63,0.41);
+    const auto smallGeometry = host::frameGeometry(testFormat, {0,0,160,90}, {0,0,160,90}, {0,0,160,90},
+                                                  1.0/3,1.0/3,1,0.63,0.41);
+    s.distance = 36;
+    s.lateral = s.lateralColor = 12;
+    s.axialColor = 9;
+    s.channelBlur = 9;
+    for (Mode mode : {Mode::Separation,Mode::Aberration,Mode::Physical}) {
+        s.mode = mode;
+        for (double threshold : {0.0,0.05}) {
+            s.threshold = threshold;
+            const auto high = runCpu(s,largeGeometry,large.px);
+            const auto low = runCpu(s,smallGeometry,small.px);
+            float difference = 0;
+            for (int y = 3; y < small.h-3; ++y)
+                for (int x = 3; x < small.w-3; ++x)
+                    for (int c = 0; c < 4; ++c)
+                        difference = std::fmax(difference,std::fabs(low[(y*small.w+x)*4+c]-
+                                              high[((y*3+1)*large.w+x*3+1)*4+c]));
+            char label[150];
+            std::snprintf(label,sizeof(label),"one-third output keeps fringe appearance, mode %d threshold %.2g (%.3g)",
+                          (int)mode,threshold,difference);
+            expect(difference < 0.02f,label);
+        }
+    }
+}
+
 void testNukePolicy()
 {
     namespace host = chromatron::ofx;
@@ -1221,14 +1321,14 @@ void testNukePolicy()
                host::fallbackSpace("DaVinciResolve") == ColorSpace::Rec709Gamma24,
            "Nuke uses scene-linear fallback; Resolve keeps gamma 2.4");
     const host::Rect format{0, 0, 1920, 1080};
-    const auto a = host::nukeGeometry(format, {-100, -50, 200, 200}, {0,0,100,100}, {0,0,100,100},
+    const auto a = host::frameGeometry(format, {-100, -50, 200, 200}, {0,0,100,100}, {0,0,100,100},
                                      1, 1, 1, 0.5, 0.5);
-    const auto b = host::nukeGeometry(format, {800, 400, 1200, 800}, {0,0,100,100}, {0,0,100,100},
+    const auto b = host::frameGeometry(format, {800, 400, 1200, 800}, {0,0,100,100}, {0,0,100,100},
                                      1, 1, 1, 0.5, 0.5);
     expect(a.centerX - 100 == b.centerX + 800 && a.centerY - 50 == b.centerY + 400 &&
                a.halfDiagonal == b.halfDiagonal,
            "Nuke optical axis follows format, independent of a moving bounding box");
-    const auto proxy = host::nukeGeometry(format, {0,0,480,270}, {0,0,480,270}, {0,0,480,270},
+    const auto proxy = host::frameGeometry(format, {0,0,480,270}, {0,0,480,270}, {0,0,480,270},
                                          0.5, 0.5, 2, 0.5, 0.5);
     expect(proxy.centerX == 239.5 && proxy.centerY == 269.5,
            "Nuke project coordinates respect proxy scale and pixel aspect ratio");
@@ -1258,6 +1358,7 @@ void testNukePolicy()
 
 int main()
 {
+    testRenderScaling();
     testNukePolicy();
     testWeights();
     testFlatField();
