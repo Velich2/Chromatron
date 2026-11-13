@@ -21,7 +21,7 @@ close the host and copy them:
 
 Nuke also scans the shared OFX folders listed for Resolve. Keep one visible copy of the bundle.
 The OFX archives include `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` test script.
-Windows also has a dedicated `Chromatron-1.3.1-Nuke-Windows.zip` download with Nuke setup instructions
+Windows also has a dedicated `Chromatron-1.3.2-Nuke-Windows.zip` download with Nuke setup instructions
 and the same fixed binary as the Windows OFX archive. Replace an older shared copy when upgrading.
 
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
@@ -39,6 +39,17 @@ name in After Effects (**Setup** in Premiere Pro) and in the **About Chromatron*
 Resolve and Nuke. The check asks GitHub for the latest release only when you press the button and offers to open the download
 page when a newer version exists; nothing is installed automatically and nothing else is sent.
 
+### Render resolution
+Spatial controls scale with the host's render resolution. In Premiere's GPU renderer, export size is
+combined with preview downsampling relative to the sequence frame size. A UHD sequence exported at
+1280x720 therefore uses one-third of the spatial slider values in output pixels. After Effects and
+Premiere's CPU renderer use the host's downsample fractions; Resolve and Nuke use OFX render scale.
+The optical centre stays relative to the full clip frame in Resolve and the project format in Nuke,
+independent of tiles or moving data windows. Resampling can still change fine edge detail.
+
+The Premiere export correction in 1.3.2 has automated geometry and image-comparison coverage;
+in-host UHD-to-720p export validation is pending.
+
 ## Nuke
 The same OFX bundle has a Nuke profile: scene-linear colour by default, an optical axis relative to
 project format, expanded bounding boxes and transparent-black input padding. Use GPU runs the kernels on a
@@ -48,7 +59,8 @@ in RAM, processing falls back to CPU and writes directly into Nuke's output imag
 See [Nuke installation, colour setup and testing](docs/NUKE.md). The fixed build was confirmed working
 by the user in Nuke 15.1v4 on Windows with an RTX 4090. Nuke Non-commercial cannot load third-party plug-ins.
 Windows 1.3.1 includes a mutex compatibility fix for the MSVC runtime bundled with Nuke 15.1v4.
-The Windows tests also run with that exact runtime. See the [startup compatibility notes](docs/NUKE.md#windows-startup-compatibility).
+Windows CI also runs with that exact runtime. A local compatibility test additionally covers the
+MSVC 14.23 runtime bundled with Premiere Pro 25. See the [startup compatibility notes](docs/NUKE.md#windows-startup-compatibility).
 
 ## Modes
 The examples are rendered with `chromatron_cli` from its synthetic test frame (1920×1080); each caption gives the
@@ -264,6 +276,15 @@ ctest --test-dir build
 build/chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 8 --blur 2 --threshold 0.5
 build/chromatron_cli --synthetic 1920x1080 out.ppm --mode phys --correction achromat --lateral-color 10 --axial 3
 ```
+
+On Windows, run the suite with the older C++ libraries used by supported hosts (PowerShell):
+```powershell
+./tests/windows/legacy-runtime.ps1 -TestExecutable build/Release/chromatron_tests.exe
+./tests/windows/legacy-runtime.ps1 -TestExecutable build/Release/chromatron_tests.exe -RuntimeProfile Premiere25 -RuntimeDirectory 'C:/Program Files/Adobe/Adobe Premiere Pro 2025' -OutputDirectory build/premiere25-runtime
+```
+The Nuke profile downloads fixed Microsoft files. The Premiere profile copies the libraries from a
+local Premiere Pro 25.0.0.61 installation. Both profiles verify their hashes and isolate them in the
+test directory; the applications and system libraries are left unchanged.
 
 ## CI
 GitHub Actions (`.github/workflows/build.yml`) builds and tests every PR on Linux (CPU + OpenCL on pocl), Windows
