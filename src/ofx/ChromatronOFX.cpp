@@ -22,7 +22,7 @@
     "and axial colour. OpenFX integration for DaVinci Resolve and Nuke, with CPU and GPU rendering."
 #define kPluginIdentifier "com.chromatron.Chromatron"
 #define kPluginVersionMajor 1
-#define kPluginVersionMinor 3
+#define kPluginVersionMinor 4
 
 namespace {
 
@@ -41,12 +41,24 @@ const char* const kAbout = "about";
 const char* const kMode = "mode";
 const char* const kSpace = "colorSpace";
 const int kSpaceAuto = 10;  // Color Space option index of Auto (after the ten fixed encodings)
+const char* const kPalette = "fringePalette";
+const char* const kGradient = "fringeGradient";
+const char* const kMidpointA = "fringeMidpointA";
+const char* const kMidpointB = "fringeMidpointB";
+const char* const kUseBMiddle = "fringeUseBMiddle";
+const char* const kColorBMiddle = "fringeColorBMiddle";
+const char* const kColorA = "fringeColorA";
+const char* const kColorB = "fringeColorB";
+const char* const kColorAEnd = "fringeColorAEnd";
+const char* const kColorBEnd = "fringeColorBEnd";
+const char* const kResetColors = "resetFringeColors";
 const char* const kPair = "colorPair";
 const char* const kAngle = "angle";
 const char* const kDistance = "distance";
 const char* const kSpread = "spread";
 const char* const kLateral = "lateral";
 const char* const kBalance = "balance";
+const char* const kFringeSoftness = "fringeSoftness";
 const char* const kCorrection = "correction";
 const char* const kLateralColor = "lateralColor";
 const char* const kAxialColor = "axialColor";
@@ -77,11 +89,19 @@ public:
         mode_ = fetchChoiceParam(kMode);
         space_ = fetchChoiceParam(kSpace);
         pair_ = fetchChoiceParam(kPair);
+        palette_ = fetchChoiceParam(kPalette);
+        gradient_ = fetchBooleanParam(kGradient);
+        midpointA_ = fetchDoubleParam(kMidpointA); midpointB_ = fetchDoubleParam(kMidpointB);
+        useBMiddle_ = fetchBooleanParam(kUseBMiddle);
+        colorBMiddle_ = fetchRGBParam(kColorBMiddle);
+        colorA_ = fetchRGBParam(kColorA); colorB_ = fetchRGBParam(kColorB);
+        colorAEnd_ = fetchRGBParam(kColorAEnd); colorBEnd_ = fetchRGBParam(kColorBEnd);
         angle_ = fetchDoubleParam(kAngle);
         distance_ = fetchDoubleParam(kDistance);
         spread_ = fetchDoubleParam(kSpread);
         lateral_ = fetchDoubleParam(kLateral);
         balance_ = fetchDoubleParam(kBalance);
+        fringeSoftness_ = fetchDoubleParam(kFringeSoftness);
         correction_ = fetchChoiceParam(kCorrection);
         lateralColor_ = fetchDoubleParam(kLateralColor);
         axialColor_ = fetchDoubleParam(kAxialColor);
@@ -123,15 +143,47 @@ public:
         return true;
     }
 
-    void changedParam(const InstanceChangedArgs&, const std::string& name) override
+    void changedParam(const InstanceChangedArgs& args, const std::string& name) override
     {
-        if (name == kMode) updateEnabled();
+        if (!syncingColors_ && args.reason == eChangeUserEdit) {
+            if (name == kPalette) {
+                int index = 0; palette_->getValueAtTime(args.time,index);
+                if (index > 0 && index < cx::kFringePaletteCount && index != (int)cx::FringePalette::Custom) {
+                    const auto colors = cx::paletteColors((cx::FringePalette)index);
+                    syncingColors_ = true;
+                    try {
+                        beginEditBlock("Change Fringe Palette");
+                        auto set = [&](RGBParam* p, cx::FringeColor c) {p->setValueAtTime(args.time,c.r,c.g,c.b);};
+                        set(colorA_,colors.a); set(colorB_,colors.b);
+                        set(colorAEnd_,colors.aEnd); set(colorBEnd_,colors.bEnd);
+                        set(colorBMiddle_, colors.bMiddle);
+                        useBMiddle_->setValueAtTime(args.time, colors.useBMiddle);
+                        gradient_->setValueAtTime(args.time,colors.gradient);
+                        midpointA_->setValueAtTime(args.time,100*colors.midpointA);
+                        midpointB_->setValueAtTime(args.time,100*colors.midpointB);
+                        endEditBlock();
+                    } catch (...) {syncingColors_=false; throw;}
+                    syncingColors_ = false;
+                }
+            } else if (name == kColorA || name == kColorB || name == kColorAEnd || name == kColorBEnd ||
+                       name == kMidpointA || name == kMidpointB || name == kGradient ||
+                       name == kUseBMiddle || name == kColorBMiddle) {
+                palette_->setValueAtTime(args.time,(int)cx::FringePalette::Custom);
+                updateEnabled();
+            }
+        }
+        if (name == kMode || name == kPalette || name == kGradient || name == kUseBMiddle) updateEnabled();
         else if (name == kAbout) about();
-        else if (name == kResetSeparation) reset("Reset RGB Separation", pair_, angle_, distance_, spread_);
-        else if (name == kResetAberration) reset("Reset Lens Aberration", lateral_, balance_);
+        else if (name == kResetSeparation) reset("Reset RGB Separation", angle_, distance_, spread_);
+        else if (name == kResetAberration) reset("Reset Lens Aberration", lateral_, fringeSoftness_);
+        else if (name == kResetColors) {
+            reset("Reset Fringe Colors", palette_, gradient_, colorA_, colorB_, colorAEnd_, colorBEnd_,
+                  useBMiddle_, colorBMiddle_, midpointA_, midpointB_, pair_, balance_, saturation_);
+            updateEnabled();
+        }
         else if (name == kResetPhysical) reset("Reset Physical Lens", correction_, lateralColor_, axialColor_, focus_);
         else if (name == kResetMask) reset("Reset Edge Mask", threshold_, softness_, showMask_);
-        else if (name == kResetOptics) reset("Reset Optics", center_, falloff_, anamorphic_, highlight_, saturation_, blur_, mix_);
+        else if (name == kResetOptics) reset("Reset Optics", center_, falloff_, anamorphic_, highlight_, blur_, mix_);
     }
 
 private:
@@ -174,6 +226,11 @@ private:
         p->setValue(x, y);
     }
 
+    static void resetParam(RGBParam* p)
+    {
+        double r=0,g=0,b=0; p->getDefault(r,g,b); p->setValue(r,g,b);
+    }
+
     cx::Settings settingsAt(double t) const
     {
         cx::Settings s;
@@ -184,10 +241,22 @@ private:
         s.space = v == kSpaceAuto ? hostColorSpace() : (cx::ColorSpace)v;
         pair_->getValueAtTime(t, v);
         s.pair = (cx::ColorPair)v;
+        palette_->getValueAtTime(t,v);
+        s.palette = static_cast<cx::FringePalette>(std::clamp(v, 0, cx::kFringePaletteCount-1));
+        s.gradient = gradient_->getValueAtTime(t);
+        s.useColorBMiddle = useBMiddle_->getValueAtTime(t);
+        colorBMiddle_->getValueAtTime(t,s.colorBMiddle.r,s.colorBMiddle.g,s.colorBMiddle.b);
+        s.gradientMidpointA = midpointA_->getValueAtTime(t)/100.0;
+        s.gradientMidpointB = midpointB_->getValueAtTime(t)/100.0;
+        colorA_->getValueAtTime(t,s.colorA.r,s.colorA.g,s.colorA.b);
+        colorB_->getValueAtTime(t,s.colorB.r,s.colorB.g,s.colorB.b);
+        colorAEnd_->getValueAtTime(t,s.colorAEnd.r,s.colorAEnd.g,s.colorAEnd.b);
+        colorBEnd_->getValueAtTime(t,s.colorBEnd.r,s.colorBEnd.g,s.colorBEnd.b);
         s.angleDeg = angle_->getValueAtTime(t);
         s.distance = distance_->getValueAtTime(t);
         s.spread = spread_->getValueAtTime(t);
         s.lateral = lateral_->getValueAtTime(t);
+        s.fringeSoftness = fringeSoftness_->getValueAtTime(t)/100.0;
         s.balance = balance_->getValueAtTime(t);
         correction_->getValueAtTime(t, v);
         s.correction = (cx::LensCorrection)v;
@@ -307,11 +376,24 @@ private:
         int v = 0;
         mode_->getValue(v);
         const bool sep = v == 0, abr = v == 1, phys = v == 2;
-        pair_->setEnabled(sep);
+        int index=0; palette_->getValue(index);
+        const bool original = index == 0;
+        const bool gradient = index == (int)cx::FringePalette::Custom ? gradient_->getValue() : cx::paletteColors((cx::FringePalette)index).gradient;
+        const bool bMiddle = gradient && (index == (int)cx::FringePalette::Custom
+            ? useBMiddle_->getValue() : cx::paletteColors((cx::FringePalette)index).useBMiddle);
+        pair_->setEnabled(sep && original); pair_->setIsSecret(!(sep && original));
+        gradient_->setEnabled(!original); gradient_->setIsSecret(original);
+        useBMiddle_->setEnabled(!original && gradient); useBMiddle_->setIsSecret(original || !gradient);
+        colorBMiddle_->setEnabled(bMiddle); colorBMiddle_->setIsSecret(!bMiddle);
+        for (RGBParam* p : {colorA_,colorB_}) {p->setEnabled(!original); p->setIsSecret(original);}
+        for (RGBParam* p : {colorAEnd_,colorBEnd_}) {p->setEnabled(!original && gradient); p->setIsSecret(original || !gradient);}
+        balance_->setIsSecret(!abr);
+        for (DoubleParam* p : {midpointA_,midpointB_}) {p->setEnabled(!original && gradient);p->setIsSecret(original || !gradient);}
         angle_->setEnabled(sep);
         distance_->setEnabled(sep);
         spread_->setEnabled(sep);
         lateral_->setEnabled(abr);
+        fringeSoftness_->setEnabled(abr);
         balance_->setEnabled(abr);
         correction_->setEnabled(phys);
         lateralColor_->setEnabled(phys);
@@ -344,10 +426,22 @@ private:
     ChoiceParam* mode_ = nullptr;
     ChoiceParam* space_ = nullptr;
     ChoiceParam* pair_ = nullptr;
+    ChoiceParam* palette_ = nullptr;
+    BooleanParam* gradient_ = nullptr;
+    BooleanParam* useBMiddle_ = nullptr;
+    DoubleParam* midpointA_ = nullptr;
+    DoubleParam* midpointB_ = nullptr;
+    RGBParam* colorA_ = nullptr;
+    RGBParam* colorB_ = nullptr;
+    RGBParam* colorAEnd_ = nullptr;
+    RGBParam* colorBEnd_ = nullptr;
+    RGBParam* colorBMiddle_ = nullptr;
+    bool syncingColors_ = false;
     DoubleParam* angle_ = nullptr;
     DoubleParam* distance_ = nullptr;
     DoubleParam* spread_ = nullptr;
     DoubleParam* lateral_ = nullptr;
+    DoubleParam* fringeSoftness_ = nullptr;
     DoubleParam* balance_ = nullptr;
     ChoiceParam* correction_ = nullptr;
     DoubleParam* lateralColor_ = nullptr;
@@ -526,16 +620,6 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     page->addChild(*mode);
 
     GroupParamDescriptor* sep = defineGroup(desc, "separationGroup", "RGB Separation", page);
-    ChoiceParamDescriptor* pair = desc.defineChoiceParam(kPair);
-    pair->setLabels("Color Pair", "Color Pair", "Color Pair");
-    pair->setHint("Which channels move in opposite directions.");
-    pair->appendOption("Red / Cyan");
-    pair->appendOption("Green / Magenta");
-    pair->appendOption("Blue / Yellow");
-    pair->appendOption("Red / Blue (green fixed)");
-    pair->setDefault((int)cx::ColorPair::RedBlue);
-    pair->setParent(*sep);
-    page->addChild(*pair);
     DoubleParamDescriptor* angle = defineDouble(desc, kAngle, "Angle", "Direction of the split (degrees).", 45.0,
                                                 -3600.0, 3600.0, -180.0, 180.0, sep, page);
     angle->setDoubleType(eDoubleTypeAngle);
@@ -552,9 +636,9 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     GroupParamDescriptor* abr = defineGroup(desc, "aberrationGroup", "Lens Aberration", page);
     defineDouble(desc, kLateral, "Lateral", "Spread of the spectrum at the frame corner, pixels. Negative swaps sides.",
                  5.0, -500.0, 500.0, -40.0, 40.0, abr, page);
-    defineDouble(desc, kBalance, "Fringe Balance",
-                 "-1 red-orange / cyan, 0 orange / teal, +1 golden / azure. Never magenta, purple or green.", 0.0,
-                 -1.0, 1.0, -1.0, 1.0, abr, page);
+    defineDouble(desc, kFringeSoftness, "Fringe Softness (%)",
+                 "Lower values sharpen the fringe transitions without reducing the average colour separation.",
+                 100, 25, 100, 25, 100, abr, page);
     PushButtonParamDescriptor* kResetAberrationButton = desc.definePushButtonParam(kResetAberration);
     kResetAberrationButton->setLabels("Reset", "Reset", "Reset");
     kResetAberrationButton->setHint("Set this group's parameters back to their defaults.");
@@ -585,6 +669,53 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     kResetPhysicalButton->setHint("Set this group's parameters back to their defaults.");
     kResetPhysicalButton->setParent(*phys);
     page->addChild(*kResetPhysicalButton);
+
+    GroupParamDescriptor* colors = defineGroup(desc, "fringeColorsGroup", "Fringe Colors", page);
+    ChoiceParamDescriptor* palette = desc.defineChoiceParam(kPalette);
+    palette->setLabels("Palette", "Palette", "Palette");
+    palette->setHint("Original preserves the existing rendering. Editing a colour or Gradient switches to Custom.");
+    for (const char* name : {"Original", "Cobalt / Amber", "Glacier / Vermilion", "Steel / Copper", "Deep Blue / Saffron", "Vintage Glass", "Coated Glass", "Custom", "Lens Coating"}) palette->appendOption(name);
+    palette->setDefault(0); palette->setParent(*colors); page->addChild(*palette);
+    ChoiceParamDescriptor* pair = desc.defineChoiceParam(kPair);
+    pair->setLabels("Color Pair", "Color Pair", "Color Pair");
+    pair->setHint("Which channels move in opposite directions.");
+    pair->appendOption("Red / Cyan");
+    pair->appendOption("Green / Magenta");
+    pair->appendOption("Blue / Yellow");
+    pair->appendOption("Red / Blue (green fixed)");
+    pair->setDefault((int)cx::ColorPair::RedBlue);
+    pair->setParent(*colors);
+    page->addChild(*pair);
+    BooleanParamDescriptor* gradient = desc.defineBooleanParam(kGradient);
+    gradient->setLabels("Gradient", "Gradient", "Gradient");
+    gradient->setHint("Blend each fringe from its first colour at the object edge to its End colour outward.");
+    gradient->setDefault(false); gradient->setParent(*colors); page->addChild(*gradient);
+    const auto initial = cx::paletteColors(cx::FringePalette::CobaltAmber);
+    auto defineColor = [&](const char* name, const char* label, cx::FringeColor value) {
+        RGBParamDescriptor* p = desc.defineRGBParam(name);
+        p->setLabels(label,label,label);
+        p->setHint("Fringe colour in display sRGB.");
+        p->setDefault(value.r,value.g,value.b);
+        p->setRange(0,0,0,1,1,1); p->setParent(*colors); page->addChild(*p);
+    };
+    defineColor(kColorA,"Color A",initial.a); defineColor(kColorAEnd,"Color A End",initial.aEnd);
+    defineColor(kColorB,"Color B",initial.b); defineColor(kColorBEnd,"Color B End",initial.bEnd);
+    defineDouble(desc,kMidpointA,"Color A Transition (%)","Position of the equal colour mix across fringe A. Higher values extend the first colour farther.",50,5,95,5,95,colors,page);
+    defineDouble(desc,kMidpointB,"Color B Transition (%)","Position of Color B Middle when enabled, otherwise the position of the equal colour mix.",50,5,95,5,95,colors,page);
+    BooleanParamDescriptor* useBMiddle = desc.defineBooleanParam(kUseBMiddle);
+    useBMiddle->setLabels("Use Color B Middle", "Use Color B Middle", "Use Color B Middle");
+    useBMiddle->setDefault(false); useBMiddle->setParent(*colors); page->addChild(*useBMiddle);
+    defineColor(kColorBMiddle, "Color B Middle", cx::Settings{}.colorBMiddle);
+    defineDouble(desc, kBalance, "Fringe Balance",
+                 "-1 red-orange / cyan, 0 orange / teal, +1 golden / azure. Original keeps its warm/cool axis; styled palettes keep their chosen hues.", 0.0,
+                 -1.0, 1.0, -1.0, 1.0, colors, page);
+    defineDouble(desc, kSaturation, "Fringe Saturation",
+                 "Strength of the fringe colour, independent of its width: 0 = no colour, 1 = natural, 2 = vivid.",
+                 1.0, 0.0, 10.0, 0.0, 2.0, colors, page);
+    PushButtonParamDescriptor* resetColors = desc.definePushButtonParam(kResetColors);
+    resetColors->setLabels("Reset", "Reset", "Reset");
+    resetColors->setHint("Restore Original and this group's defaults without changing spatial controls.");
+    resetColors->setParent(*colors); page->addChild(*resetColors);
 
     GroupParamDescriptor* mask = defineGroup(desc, "maskGroup", "Edge Mask", page);
     defineDouble(desc, kThreshold, "Contrast Threshold",
@@ -625,9 +756,6 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
                  "Stops of light restored to clipped highlights before the optics, so fringes glow out of them "
                  "instead of tinting the white. 0 = off; useful for SDR and display-referred footage.",
                  0.0, 0.0, 8.0, 0.0, 4.0, optics, page);
-    defineDouble(desc, kSaturation, "Fringe Saturation",
-                 "Strength of the fringe colour, independent of its width: 0 = no colour, 1 = natural, 2 = vivid.",
-                 1.0, 0.0, 10.0, 0.0, 2.0, optics, page);
     defineDouble(desc, kBlur, "Fringe Blur", "Softens the colour of the fringes, pixels; image detail stays sharp.",
                  0.0, 0.0, 200.0, 0.0, 20.0, optics, page);
     defineDouble(desc, kMix, "Mix", "Blend with the original.", 1.0, 0.0, 1.0, 0.0, 1.0, optics, page);

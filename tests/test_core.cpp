@@ -4,6 +4,7 @@
 #include "core/Chromatron.h"
 #include "ofx/HostPolicy.h"
 #include "ae/RenderScale.h"
+#include "ae/ChromatronParams.h"
 
 #if CHROMATRON_HAS_OPENCL
 #ifdef _WIN32
@@ -23,6 +24,7 @@
 #include <cuda_runtime.h>
 #endif
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -41,6 +43,7 @@ bool chromatronRenderMetal(const Plan& plan, const std::vector<float>& src, std:
 namespace {
 
 int failures = 0;
+constexpr int kParityCases = 15;
 
 void expect(bool ok, const char* what)
 {
@@ -924,8 +927,8 @@ void testFringeSaturation()
     expect(c0 < 1e-4f && c3 > 1.3f * c1 && low3 >= std::fmin(low1, 0.0f) - 1e-5f, what);
 }
 
-// Backend parity case `run` (0..5): every mode with the defaults, then with the look controls,
-// on a chart encoded in the mode's colour space.
+// Every mode with Original, look controls, a solid preset, a gradient preset and
+// a custom gradient, on encoded footage and both full and reduced render scales.
 Settings parityCase(int run, Frame& f)
 {
     const int mode = run % 3;
@@ -935,6 +938,13 @@ Settings parityCase(int run, Frame& f)
     s.threshold = 0.4;
     s.distance = 9.0;
     if (run >= 3) withLook(s);
+    if (run >= 6) s.palette = run < 9 ? FringePalette::SteelCopper : FringePalette::LensCoating;
+    if (run == 10 || run == 13) s.fringeSoftness = 0.5;
+    if (run >= 12) {
+        s.palette = FringePalette::Custom; s.gradient = true;
+        s.colorA = {0.1,0.4,0.7}; s.colorB = {0.8,0.2,0.1};
+        s.colorAEnd = {0.4,0.8,0.65}; s.colorBEnd = {0.95,0.8,0.35};
+    }
     s.space = mode ? ColorSpace::DWGIntermediate : ColorSpace::Rec709Scene;
     f = neutralChart(96, 64);
     const int transfer = mode ? CK_TRANSFER_DAVINCI_INTERMEDIATE : CK_TRANSFER_REC709_SCENE;
@@ -951,7 +961,7 @@ void testCuda()
         std::printf("[skip] no CUDA device this build can run on\n");
         return;
     }
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < kParityCases; ++run) {
         Frame f;
         const Settings s = parityCase(run, f);
         const Geometry g = fullGeometry(f.w, f.h);
@@ -995,7 +1005,7 @@ bool testPrivateGpuBackend(const char* name, bool (*deviceAvailable)(), std::uni
             std::printf("[skip] private %s: no GPU device\n", name);
             return false;
         }
-        for (int run = 0; run < 6; ++run) {
+        for (int run = 0; run < kParityCases; ++run) {
             Frame f;
             const Settings s = parityCase(run, f);
             Geometry g = fullGeometry(f.w, f.h);
@@ -1059,7 +1069,7 @@ void testPrivateGpu()
         std::printf("%s private GPU: %s\n", gpuPresent ? "[FAIL]" : "[skip]", backend.c_str());
         return;
     }
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < kParityCases; ++run) {
         s = parityCase(run, f);
         g = fullGeometry(f.w, f.h);
         g.dstWidth = f.w - 12;
@@ -1137,7 +1147,7 @@ void testOpenCL()
     cl_int err;
     cl_context ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
     cl_command_queue q = clCreateCommandQueue(ctx, device, 0, &err);
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < kParityCases; ++run) {
         Frame f;
         const Settings s = parityCase(run, f);
         const Geometry g = fullGeometry(f.w, f.h);
@@ -1192,7 +1202,7 @@ void testOpenCL()
 #if CHROMATRON_HAS_METAL
 void testMetal()
 {
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < kParityCases; ++run) {
         Frame f;
         const Settings s = parityCase(run, f);
         const Geometry g = fullGeometry(f.w, f.h);
@@ -1214,6 +1224,125 @@ void testMetal()
     }
 }
 #endif
+
+void testFringePalettes()
+{
+    const Frame chart = neutralChart(96,64);
+    const Frame flat = makeFrame(48,32,[](int,int,float* p) {p[0]=0.15f;p[1]=0.3f;p[2]=0.05f;p[3]=0.5f;});
+    const auto geometry = fullGeometry(chart.w,chart.h);
+    bool equivalents=true, neutral=true, luminance=true, finite=true;
+    for (Mode mode : {Mode::Separation,Mode::Aberration,Mode::Physical}) {
+        Settings s = aberration(); s.mode=mode; s.channelBlur=0; s.correction=LensCorrection::Achromat;
+        s.pair=ColorPair::RedBlue; // styled Separation uses the canonical red/blue split
+        const auto original = runCpu(s,geometry,chart.px);
+        s.gradient=true; s.colorA={1,0,1}; s.colorB={0,1,0};
+        expect(maxDiff(original,runCpu(s,geometry,chart.px))==0,"Original ignores new colour and gradient settings");
+        for (int index=1; index<kFringePaletteCount; ++index) {
+            s.palette=(FringePalette)index;
+            if (s.palette == FringePalette::Custom) continue;
+            const auto preset = runCpu(s,geometry,chart.px);
+            const auto colors = paletteColors(s.palette);
+            Settings custom=s; custom.palette=FringePalette::Custom; custom.gradient=colors.gradient;
+            custom.colorA=colors.a;custom.colorB=colors.b;custom.colorAEnd=colors.aEnd;custom.colorBEnd=colors.bEnd;
+            custom.gradientMidpointA=colors.midpointA;custom.gradientMidpointB=colors.midpointB;
+            custom.useColorBMiddle = colors.useBMiddle;
+            custom.colorBMiddle = colors.bMiddle;
+            equivalents &= maxDiff(preset,runCpu(custom,geometry,chart.px))<1e-6f;
+            for (size_t i=0;i<preset.size();i+=4) {
+                const double y=0.2126*preset[i]+0.7152*preset[i+1]+0.0722*preset[i+2];
+                const double reference=0.2126*original[i]+0.7152*original[i+1]+0.0722*original[i+2];
+                luminance &= std::fabs(y-reference)<2e-5 && preset[i+3]==original[i+3];
+                for (int c=0;c<4;++c) finite &= std::isfinite(preset[i+c]) && preset[i+c]>=-1e-5f;
+            }
+            auto fg=fullGeometry(flat.w,flat.h);fg.premultiplied=true;
+            for (double blur : {0.0,3.0}) {
+                custom.channelBlur=blur;
+                neutral &= maxDiff(runCpu(custom,fg,flat.px),flat.px)<2e-5f;
+            }
+            custom.distance=custom.lateral=custom.lateralColor=custom.axialColor=0;
+            custom.channelBlur=0;
+            neutral &= isIdentity(custom) && maxDiff(runCpu(custom,geometry,chart.px),chart.px)<2e-5f;
+        }
+    }
+    expect(equivalents,"every solid/gradient preset matches the same custom colours in all modes");
+    expect(neutral,"palettes preserve flat premultiplied colours and identity renders");
+    expect(luminance,"palettes preserve the original render's luminance and alpha");
+    expect(finite,"palettes keep neutral/HDR edge renders finite and non-negative");
+
+    const Frame step=makeFrame(128,32,[](int x,int,float* p) {p[0]=p[1]=p[2]=x<64 ? 0.02f : 0.9f;p[3]=1;});
+    Settings s; s.space=ColorSpace::LinearRec709;s.distance=32;s.angleDeg=0;s.spread=0;s.palette=FringePalette::CoatedGlass;
+    const auto p=buildPlan(s,fullGeometry(step.w,step.h)).params;
+    float previous=-1; bool ordered=true;
+    for (float x : {65.0f,69.0f,73.0f,77.0f}) {
+        const float progress=ck_palette_progress(&p,step.px.data(),x,16,0,0,0,0.5f);
+        ordered &= progress>previous && progress>=0 && progress<=1;
+        previous=progress;
+    }
+    expect(ordered && previous>0.8f,"hard Separation fringes progress spatially from inner to outer colour");
+    s.palette=FringePalette::VintageGlass;
+    auto colors=paletteColors(s.palette);
+    auto light=[](FringeColor c) {return 0.2126*c.r+0.7152*c.g+0.0722*c.b;};
+    expect(colors.a.b>colors.a.r && colors.a.r>=colors.a.g && light(colors.a)<light(colors.aEnd) && light(colors.b)<light(colors.bEnd) && colors.midpointA==0.75,
+           "Vintage Glass keeps the approved deep-blue start, extended blue and lighter ends");
+
+    Settings lens = aberration();
+    lens.lateral = 48;
+    lens.channelBlur = 0;
+    lens.palette = FringePalette::LensCoating;
+    const auto standard = buildPlan(lens, geometry).params;
+    const auto standardImage = runCpu(lens, geometry, chart.px);
+    lens.fringeSoftness = 0.5;
+    const auto sharper = buildPlan(lens, geometry).params;
+    bool momentsPreserved = sharper.numTaps == standard.numTaps;
+    for (int channel = 0; channel < 3; ++channel) {
+        auto moments = [channel](const CKParams& params) {
+            double total = 0, mean = 0, square = 0;
+            for (int i = 0; i < params.numTaps; ++i) {
+                const double weight = params.tapW[3*i+channel];
+                const double offset = params.tapT[i];
+                total += weight;
+                mean += weight * offset;
+                square += weight * offset * offset;
+            }
+            mean /= total;
+            return std::array<double, 3>{total, mean, square / total - mean * mean};
+        };
+        const auto before = moments(standard), after = moments(sharper);
+        momentsPreserved &= std::fabs(after[0]-before[0]) < 1e-6 &&
+                            std::fabs(after[1]-before[1]) < 1e-6 &&
+                            std::fabs(after[2]-0.25*before[2]) < 1e-6;
+    }
+    expect(momentsPreserved && maxDiff(standardImage, runCpu(lens, geometry, chart.px)) > 0.02f,
+           "50% Fringe Softness halves spectral spread, preserves separation and changes the image");
+    const auto coating = paletteColors(FringePalette::LensCoating);
+    lens.palette = FringePalette::Custom;
+    lens.gradient = coating.gradient;
+    lens.colorA = coating.a; lens.colorB = coating.b;
+    lens.colorAEnd = coating.aEnd; lens.colorBEnd = coating.bEnd;
+    lens.gradientMidpointA = coating.midpointA; lens.gradientMidpointB = coating.midpointB;
+    lens.colorBMiddle = coating.bMiddle;
+    const auto twoStops = runCpu(lens, geometry, chart.px);
+    lens.useColorBMiddle = true;
+    expect(maxDiff(twoStops, runCpu(lens, geometry, chart.px)) > 0.01f,
+           "Lens Coating's middle stop visibly changes the warm fringe");
+
+    s.palette=FringePalette::Custom;s.colorA={NAN,INFINITY,-1};s.colorB={1.5,0.3,0.2};s.gradient=true;
+    const auto invalid=runCpu(s,fullGeometry(step.w,step.h),step.px);
+    bool sanitized=true;for(float value:invalid) sanitized &= std::isfinite(value);
+    expect(sanitized,"custom colour values are bounded and sanitized before GPU upload");
+
+    using namespace chromatron::ae;
+    Inputs inputs;
+    SetParam(P_PALETTE,7,0,inputs);SetParam(P_GRADIENT,1,0,inputs);
+    SetPremiereColorParam(P_COLOR_A,0xFF1234ABu,inputs);
+    SetPremiereColorParam(P_COLOR_B_END,0xFFABCDEFu,inputs);
+    expect(inputs.settings.palette==FringePalette::CoatedGlass && inputs.settings.gradient &&
+               std::fabs(inputs.settings.colorA.r-18.0/255)<1e-12 &&
+               std::fabs(inputs.settings.colorA.b-171.0/255)<1e-12 &&
+               std::fabs(inputs.settings.colorBEnd.g-205.0/255)<1e-12 &&
+               HasValue(P_COLOR_A_END) && !HasValue(P_COLORS_START) && !HasValue(P_COLORS_RESET),
+           "Adobe CPU/GPU parameter adapters preserve palette, gradient and packed colour order");
+}
 
 void testRenderScaling()
 {
@@ -1358,6 +1487,7 @@ void testNukePolicy()
 
 int main()
 {
+    testFringePalettes();
     testRenderScaling();
     testNukePolicy();
     testWeights();

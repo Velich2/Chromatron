@@ -17,6 +17,7 @@
 #include "PrSDKAESupport.h"  // PF_TransitionSuite, used by PrGPUFilterModule.h
 #include "PrGPUFilterModule.h"
 #include "PrSDKSequenceInfoSuite.h"
+#include "PremiereColor.h"
 
 #include <cmath>
 #include <exception>
@@ -118,20 +119,19 @@ public:
         mPPixSuite->GetRowBytes(inFrames[0], &srcRowBytes);
         mPPixSuite->GetRowBytes(*outFrame, &dstRowBytes);
 
-        const Inputs inputs = ReadInputs(inRenderParams->inClipTime, width, height);
-        cx::Geometry g;
-        g.srcWidth = g.dstWidth = width;
-        g.srcHeight = g.dstHeight = height;
-        g.srcPitch = srcRowBytes / channelBytes;
-        g.dstPitch = dstRowBytes / channelBytes;
-        g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
-        g.hostFormat = half ? CK_HOST_HALF : CK_HOST_FLOAT;
-        g.premultiplied = false;  // straight alpha, like the BGRA_4444 CPU formats
-        g.centerX = inputs.centerX;
-        g.centerY = inputs.centerY;
-        g.halfDiagonal = 0.5 * std::hypot((double)width, (double)height);
-
         try {
+            const Inputs inputs = ReadInputs(inRenderParams->inClipTime, width, height);
+            cx::Geometry g;
+            g.srcWidth = g.dstWidth = width;
+            g.srcHeight = g.dstHeight = height;
+            g.srcPitch = srcRowBytes / channelBytes;
+            g.dstPitch = dstRowBytes / channelBytes;
+            g.srcOrder = g.dstOrder = CK_ORDER_BGRA;
+            g.hostFormat = half ? CK_HOST_HALF : CK_HOST_FLOAT;
+            g.premultiplied = false;  // straight alpha, like the BGRA_4444 CPU formats
+            g.centerX = inputs.centerX;
+            g.centerY = inputs.centerY;
+            g.halfDiagonal = 0.5 * std::hypot((double)width, (double)height);
             g.renderScale = RenderScale(*inRenderParams);
             std::unique_ptr<cx::Backend> backend = makeBackend();
             const cx::Plan plan = cx::buildPlan(PremiereSettings(inputs), g);
@@ -188,10 +188,20 @@ private:
         Inputs inputs;
         for (int index = P_INPUT + 1; index < P_NUM_PARAMS; ++index) {
             if (!HasValue(index)) continue;
-            const PrParam p = GetParam(index, time);
+            // Presets use their built-in colours. Only Custom needs picker values.
+            if (IsFringeColor(index) && inputs.settings.palette != cx::FringePalette::Custom) continue;
+            if (index == P_COLOR_B_MIDDLE && (!inputs.settings.gradient || !inputs.settings.useColorBMiddle)) continue;
+            PrParam p = {};
+            // The SDK helper discards GetParam errors. Keep them inside Render's
+            // exception boundary instead of interpreting an empty union as a value.
+            if (PrSuiteErrorFailed(mVideoSegmentSuite->GetParam(mNodeID,index-1,time,&p)))
+                throw std::runtime_error("Chromatron: could not read a Premiere parameter");
             if (index == P_CENTER) {
                 SetParam(index, p.mPoint.x * width - 0.5, p.mPoint.y * height - 0.5, inputs);
-            } else if (index == P_MODE || index == P_PAIR || index == P_CORRECTION || index == P_SPACE) {
+            } else if (IsFringeColor(index)) {
+                if (!ReadPremiereColorParam(index,p,inputs))
+                    throw std::runtime_error("Chromatron: unsupported Premiere colour parameter type");
+            } else if (index == P_MODE || index == P_PAIR || index == P_CORRECTION || index == P_SPACE || index == P_PALETTE) {
                 SetParam(index, numeric(p) + 1 - kPopupBase, 0, inputs);
             } else {
                 SetParam(index, numeric(p), 0, inputs);

@@ -29,8 +29,8 @@ using namespace chromatron::ae;
 
 namespace {
 
-// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 3, 2, PF_Stage_RELEASE, 1) = 628225.
-constexpr int kMajor = 1, kMinor = 3, kBug = 2, kBuild = 1;
+// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 4, 0, PF_Stage_RELEASE, 3) = 656899.
+constexpr int kMajor = 1, kMinor = 4, kBug = 0, kBuild = 3;
 #if defined(CHROMATRON_VERSION_MAJOR)
 static_assert(kMajor == CHROMATRON_VERSION_MAJOR && kMinor == CHROMATRON_VERSION_MINOR &&
                   kBug == CHROMATRON_VERSION_PATCH,
@@ -77,7 +77,10 @@ enum {
     ID_FALLOFF,
     ID_ANAMORPHIC,
     ID_HIGHLIGHT,
-    ID_SATURATION
+    ID_SATURATION,
+    ID_COLORS_START, ID_PALETTE, ID_GRADIENT, ID_COLOR_A, ID_COLOR_B,
+    ID_COLOR_A_END, ID_COLOR_B_END, ID_COLORS_RESET, ID_COLORS_END, ID_MIDPOINT_A, ID_MIDPOINT_B,
+    ID_FRINGE_SOFTNESS, ID_USE_B_MIDDLE, ID_COLOR_B_MIDDLE
 };  // ID_SAMPLES is retired (Spectral Samples is automatic now)
 
 // Scoped PICA suite acquisition.
@@ -186,12 +189,11 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     PF_ParamDef def;
 
     AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
     PF_ADD_POPUP("Mode", 3, dflt::kMode, "RGB Separation|Lens Aberration|Physical Lens", ID_MODE);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("RGB Separation", ID_SEP_START);
-    AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP("Color Pair", 4, dflt::kPair, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
     AEFX_CLR_STRUCT(def);
     PF_ADD_ANGLE("Angle", dflt::kAngle, ID_ANGLE);
     AEFX_CLR_STRUCT(def);
@@ -207,7 +209,9 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Lateral", -500, 500, -40, 40, dflt::kLateral, PF_Precision_TENTHS, 0, 0, ID_LATERAL);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Fringe Balance", -1, 1, -1, 1, dflt::kBalance, PF_Precision_HUNDREDTHS, 0, 0, ID_BALANCE);
+    PF_ADD_FLOAT_SLIDERX("Fringe Softness", 25, 100, 25, 100, 100, PF_Precision_TENTHS,
+                         PF_ValueDisplayFlag_PERCENT, 0, ID_FRINGE_SOFTNESS);
+    AEFX_CLR_STRUCT(def);
     PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_ABR_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_ABR_END);
@@ -225,6 +229,51 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_PHYS_RESET);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(ID_PHYS_END);
+
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_TOPIC("Fringe Colors", ID_COLORS_START);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_POPUP("Palette", cx::kFringePaletteCount, 1,
+                 "Original|Cobalt / Amber|Glacier / Vermilion|Steel / Copper|Deep Blue / Saffron|Vintage Glass|Coated Glass|Custom|Lens Coating", ID_PALETTE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POPUP("Color Pair", 4, dflt::kPair, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_CHECKBOXX("Gradient", FALSE, 0, ID_GRADIENT);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_COLOR("Color A", 53, 95, 211, ID_COLOR_A);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_COLOR("Color A End", 53, 95, 211, ID_COLOR_A_END);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_COLOR("Color B", 226, 171, 67, ID_COLOR_B);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_COLOR("Color B End", 226, 171, 67, ID_COLOR_B_END);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_FLOAT_SLIDERX("Color A Transition", 5, 95, 5, 95, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIDPOINT_A);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_FLOAT_SLIDERX("Color B Transition", 5, 95, 5, 95, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIDPOINT_B);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_CHECKBOXX("Use Color B Middle", FALSE, 0, ID_USE_B_MIDDLE);
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_SUPERVISE;
+    PF_ADD_COLOR("Color B Middle", 140, 148, 89, ID_COLOR_B_MIDDLE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Fringe Balance", -1, 1, -1, 1, dflt::kBalance, PF_Precision_HUNDREDTHS, 0, 0, ID_BALANCE);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_FLOAT_SLIDERX("Fringe Saturation", 0, 1000, 0, 200, dflt::kSaturation, PF_Precision_TENTHS,
+                         PF_ValueDisplayFlag_PERCENT, 0, ID_SATURATION);
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_BUTTON("Defaults", "Reset", 0, PF_ParamFlag_SUPERVISE, ID_COLORS_RESET);
+    AEFX_CLR_STRUCT(def);
+    PF_END_TOPIC(ID_COLORS_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Edge Mask", ID_MASK_START);
@@ -248,9 +297,6 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     PF_ADD_FLOAT_SLIDERX("Anamorphic", -1, 1, -1, 1, dflt::kAnamorphic, PF_Precision_HUNDREDTHS, 0, 0, ID_ANAMORPHIC);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Highlight Boost", 0, 8, 0, 4, dflt::kHighlight, PF_Precision_HUNDREDTHS, 0, 0, ID_HIGHLIGHT);
-    AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Fringe Saturation", 0, 1000, 0, 200, dflt::kSaturation, PF_Precision_TENTHS,
-                         PF_ValueDisplayFlag_PERCENT, 0, ID_SATURATION);
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX("Fringe Blur", 0, 200, 0, 20, dflt::kBlur, PF_Precision_TENTHS, 0, 0, ID_BLUR);
     AEFX_CLR_STRUCT(def);
@@ -279,16 +325,36 @@ PF_Err UpdateParamsUI(PF_InData* in, PF_OutData*, PF_ParamDef* params[])
     const A_long mode = params[P_MODE]->u.pd.value;
     const bool sep = mode <= 1, abr = mode == 2, phys = mode >= 3;
     PF_Err err = PF_Err_NONE;
-    auto enable = [&](int index, bool on) {
+    const auto palette = static_cast<cx::FringePalette>(std::clamp(
+        (int)params[P_PALETTE]->u.pd.value-1, 0, cx::kFringePaletteCount-1));
+    const bool original = palette == cx::FringePalette::Original;
+    const bool gradient = palette == cx::FringePalette::Custom ? params[P_GRADIENT]->u.bd.value != 0 : cx::paletteColors(palette).gradient;
+    auto enable = [&](int index, bool on, bool visible = true) {
         PF_ParamDef def = *params[index];
-        const bool isOn = (def.ui_flags & PF_PUI_DISABLED) == 0;
-        if (err || isOn == on) return;
+        const auto previous = def.ui_flags;
         if (on) def.ui_flags &= ~PF_PUI_DISABLED;
         else def.ui_flags |= PF_PUI_DISABLED;
+        // PF_UpdateParamUI permits dynamic visibility only in Premiere, using
+        // PF_PUI_INVISIBLE. AE keeps inactive rows visible and disabled.
+        if (in->appl_id == kPremiere) {
+            if (visible) def.ui_flags &= ~PF_PUI_INVISIBLE;
+            else def.ui_flags |= PF_PUI_INVISIBLE;
+        }
+        if (err || previous == def.ui_flags) return;
         err = utils->PF_UpdateParamUI(in->effect_ref, index, &def);
     };
-    for (int i : {P_PAIR, P_ANGLE, P_DISTANCE, P_SPREAD}) enable(i, sep);
-    for (int i : {P_LATERAL, P_BALANCE}) enable(i, abr);
+    for (int i : {P_ANGLE, P_DISTANCE, P_SPREAD}) enable(i, sep);
+    enable(P_PAIR, sep && original, sep && original);
+    enable(P_GRADIENT, !original, !original);
+    for (int i : {P_COLOR_A, P_COLOR_B}) enable(i,!original,!original);
+    for (int i : {P_COLOR_A_END, P_COLOR_B_END, P_MIDPOINT_A, P_MIDPOINT_B}) enable(i,!original && gradient,!original && gradient);
+    const bool bMiddle = gradient && (palette == cx::FringePalette::Custom
+        ? params[P_USE_B_MIDDLE]->u.bd.value != 0 : cx::paletteColors(palette).useBMiddle);
+    enable(P_USE_B_MIDDLE, !original && gradient, !original && gradient);
+    enable(P_COLOR_B_MIDDLE, bMiddle, bMiddle);
+    enable(P_LATERAL,abr);
+    enable(P_FRINGE_SOFTNESS, abr);
+    enable(P_BALANCE,abr,abr);
     for (int i : {P_CORRECTION, P_LATERAL_COLOR, P_AXIAL_COLOR, P_FOCUS}) enable(i, phys);
     for (int i : {P_CENTER, P_FALLOFF, P_ANAMORPHIC}) enable(i, !sep);
     enable(P_BLUR, !phys);  // the physical lens defocuses through Axial Color
@@ -310,18 +376,63 @@ cx::Settings ResolveSettings(const Inputs& inputs, bool floatWorld)
 // so animated parameters get a keyframe, as when the user types the value).
 PF_Err UserChangedParam(PF_InData* in, PF_OutData* out, PF_ParamDef* params[], const PF_UserChangedParamExtra* extra)
 {
+    auto changed = [&](int i) {params[i]->uu.change_flags |= PF_ChangeFlag_CHANGED_VALUE;};
+    auto setColor = [&](int i, cx::FringeColor c) {
+        auto& value = params[i]->u.cd.value;
+        value.red = (A_u_char)std::lround(255*c.r);
+        value.green = (A_u_char)std::lround(255*c.g);
+        value.blue = (A_u_char)std::lround(255*c.b);
+        value.alpha = 255;
+        changed(i);
+    };
+    const int index = extra->param_index;
+    const bool colorEdit = IsFringeColor(index) || index == P_MIDPOINT_A || index == P_MIDPOINT_B ||
+                           index == P_GRADIENT || index == P_USE_B_MIDDLE;
+    if (index == P_PALETTE) {
+        const auto palette = static_cast<cx::FringePalette>(std::clamp(
+            (int)params[P_PALETTE]->u.pd.value-1, 0, cx::kFringePaletteCount-1));
+        if (palette != cx::FringePalette::Original && palette != cx::FringePalette::Custom) {
+            const auto colors = cx::paletteColors(palette);
+            setColor(P_COLOR_A,colors.a); setColor(P_COLOR_B,colors.b);
+            setColor(P_COLOR_A_END,colors.aEnd); setColor(P_COLOR_B_END,colors.bEnd);
+            setColor(P_COLOR_B_MIDDLE, colors.bMiddle);
+            params[P_USE_B_MIDDLE]->u.bd.value = colors.useBMiddle ? TRUE : FALSE;
+            changed(P_USE_B_MIDDLE);
+            params[P_GRADIENT]->u.bd.value = colors.gradient ? TRUE : FALSE;
+            changed(P_GRADIENT);
+            params[P_MIDPOINT_A]->u.fs_d.value = 100*colors.midpointA;
+            params[P_MIDPOINT_B]->u.fs_d.value = 100*colors.midpointB;
+            changed(P_MIDPOINT_A); changed(P_MIDPOINT_B);
+        }
+    } else if (colorEdit) {
+        params[P_PALETTE]->u.pd.value = static_cast<int>(cx::FringePalette::Custom) + 1;
+        changed(P_PALETTE);
+    }
     const Group* group = nullptr;
     for (const Group& g : kGroups)
         if (extra->param_index == g.reset) group = &g;
-    if (!group) return PF_Err_NONE;
+    if (!group) {
+        if (index == P_MODE || index == P_PALETTE || colorEdit) {
+            out->out_flags |= PF_OutFlag_FORCE_RERENDER;
+            return UpdateParamsUI(in,out,params);
+        }
+        return PF_Err_NONE;
+    }
     for (int i = group->start + 1; i < group->reset; ++i) {
         PF_ParamDef& d = *params[i];
         switch (i) {
         case P_PAIR: d.u.pd.value = dflt::kPair; break;
+        case P_PALETTE: d.u.pd.value = 1; break;
+        case P_GRADIENT: case P_USE_B_MIDDLE: d.u.bd.value = FALSE; break;
+        case P_MIDPOINT_A: case P_MIDPOINT_B: d.u.fs_d.value = 50; break;
+        case P_COLOR_A: case P_COLOR_A_END: setColor(i,cx::paletteColors(cx::FringePalette::CobaltAmber).a); continue;
+        case P_COLOR_B: case P_COLOR_B_END: setColor(i,cx::paletteColors(cx::FringePalette::CobaltAmber).b); continue;
+        case P_COLOR_B_MIDDLE: setColor(i,cx::Settings{}.colorBMiddle); continue;
         case P_ANGLE: d.u.ad.value = FLOAT2FIX(dflt::kAngle); break;
         case P_DISTANCE: d.u.fs_d.value = dflt::kDistance; break;
         case P_SPREAD: d.u.fs_d.value = dflt::kSpread; break;
         case P_LATERAL: d.u.fs_d.value = dflt::kLateral; break;
+        case P_FRINGE_SOFTNESS: d.u.fs_d.value = 100; break;
         case P_BALANCE: d.u.fs_d.value = dflt::kBalance; break;
         case P_CORRECTION: d.u.pd.value = dflt::kCorrection; break;
         case P_LATERAL_COLOR: d.u.fs_d.value = dflt::kLateralColor; break;
@@ -345,7 +456,7 @@ PF_Err UserChangedParam(PF_InData* in, PF_OutData* out, PF_ParamDef* params[], c
         d.uu.change_flags |= PF_ChangeFlag_CHANGED_VALUE;
     }
     out->out_flags |= PF_OutFlag_FORCE_RERENDER;
-    return PF_Err_NONE;
+    return UpdateParamsUI(in,out,params);
 }
 
 void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
@@ -354,14 +465,22 @@ void ReadParam(int index, const PF_ParamDef& d, Inputs& out)
     case P_MODE:
     case P_PAIR:
     case P_SPACE:
+    case P_PALETTE:
     case P_CORRECTION: SetParam(index, d.u.pd.value, 0, out); break;
+    case P_COLOR_A: case P_COLOR_B: case P_COLOR_A_END: case P_COLOR_B_END: case P_COLOR_B_MIDDLE:
+        SetColorParam(index,d.u.cd.value.red/255.0,d.u.cd.value.green/255.0,d.u.cd.value.blue/255.0,out); break;
     case P_ANGLE: SetParam(index, FIX_2_FLOAT(d.u.ad.value), 0, out); break;
     case P_CENTER: SetParam(index, FIX_2_FLOAT(d.u.td.x_value), FIX_2_FLOAT(d.u.td.y_value), out); break;
     case P_SHOW_MASK:
+    case P_GRADIENT:
+    case P_USE_B_MIDDLE:
     case P_USE_GPU: SetParam(index, d.u.bd.value, 0, out); break;
+    case P_MIDPOINT_A:
+    case P_MIDPOINT_B:
     case P_DISTANCE:
     case P_SPREAD:
     case P_LATERAL:
+    case P_FRINGE_SOFTNESS:
     case P_BALANCE:
     case P_LATERAL_COLOR:
     case P_AXIAL_COLOR:

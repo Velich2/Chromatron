@@ -73,6 +73,19 @@ typedef struct CKParams {
     int premultiplied; // host RGB is associated with alpha: (de|en)code the colour, not RGB*alpha
     int hostFormat;   // CK_HOST_*: how the host buffers store a channel value
     int keepLuma;     // Fringe Blur: blurred taps, luminance of the unblurred ones
+    int usePalette;   // recolour only the dispersion, leaving Original on its existing path
+    float paletteDual[3]; // signed source chroma: positive = Color A, negative = Color B
+    float paletteA[3];    // target chroma in working primaries, zero luminance
+    float paletteB[3];
+    int paletteGradient;
+    float paletteAEnd[3];
+    float paletteBEnd[3];
+    float paletteBMiddle[3];
+    float paletteBMiddleAt; // zero disables the optional interior stop
+    float paletteMinT;
+    float paletteMaxT;
+    float paletteACurve;
+    float paletteBCurve;
     float lumR;       // luminance weights of the working primaries
     float lumG;
     float lumB;
@@ -682,6 +695,62 @@ CK_FN void ck_mask_view(CK_PARAMS p, CK_G float* dst, int x, int y, CKPix orig, 
 // blur level matching its defocus, and adds its RGB weight. Per-channel weights
 // sum to one, so an undisplaced, unblurred image passes through unchanged.
 // ---------------------------------------------------------------------------
+CK_FN float ck_palette_luma(CK_PARAMS p, CK_G const float* src, float fx, float fy,
+                            float dx, float dy, float scale, float t)
+{
+    float sx, sy;
+    if (p->mode == CK_MODE_SEPARATION) {
+        sx = fx - t*p->dirX; sy = fy - t*p->dirY;
+    } else {
+        const float k = 1.0f - 1.0f/ck_fmaxf(0.5f,1.0f+t*scale);
+        sx = fx - dx*k*p->anaX; sy = fy - dy*k*p->anaY;
+    }
+    const CKPix v = ck_bilinear(src,p->srcWidth,p->srcHeight,sx,sy);
+    // Quantise only the edge-search probe, not the rendered image. Otherwise
+    // tiny transfer/interpolation differences can change a bisection decision.
+    const float y = ck_tone(p->lumR*v.r + p->lumG*v.g + p->lumB*v.b);
+    return ck_floorf(y*4096.0f+0.5f)*(1.0f/4096.0f);
+}
+
+// Locate the nearest high-contrast edge within the existing sampling footprint.
+// This gives a spatial ramp even for a hard Separation edge, whose colour amount
+// is otherwise constant across the whole fringe. No blur is applied to the image.
+CK_FN float ck_palette_progress(CK_PARAMS p, CK_G const float* src, float fx, float fy,
+                                float dx, float dy, float scale, float amount)
+{
+    const float center = ck_palette_luma(p,src,fx,fy,dx,dy,scale,0.0f);
+    float best = 0.0001f, lo = 0.0f, hi = 0.0f, yl = center, yh = center;
+    for (int side = 0; side < 2; ++side) {
+        const float extent = side == 0 ? p->paletteMinT : p->paletteMaxT;
+        if (ck_fabsf(extent) < 0.00001f) continue;
+        float previousT = 0.0f, previousY = center;
+        for (int step = 1; step <= 4; ++step) {
+            const float t = extent*(float)step*0.25f;
+            const float y = ck_palette_luma(p,src,fx,fy,dx,dy,scale,t);
+            const float distance = ck_fabsf((t+previousT)*0.5f/extent);
+            const float score = ck_fabsf(y-previousY)/(0.1f+distance);
+            // Stable ties: tiny CPU/GPU interpolation differences must not choose
+            // opposite edges of a thin line and change its gradient direction.
+            if (score > best + ck_fmaxf(0.00001f,best*0.0001f)) {best=score; lo=previousT; hi=t; yl=previousY; yh=y;}
+            previousT=t; previousY=y;
+        }
+    }
+    // Pure axial defocus has no shifted sampling ray. Its halo is strongest near
+    // the source and fades outward, so use coverage for the same dark-to-light ramp.
+    if (best <= 0.0001f) return 0.25f/(0.25f+ck_fabsf(amount));
+    const float threshold = (yl+yh)*0.5f;
+    const bool ascending = yl < yh;
+    for (int iteration = 0; iteration < 6; ++iteration) {
+        const float mid = (lo+hi)*0.5f;
+        const float y = ck_palette_luma(p,src,fx,fy,dx,dy,scale,mid);
+        if ((y < threshold-0.000001f) == ascending) lo=mid; else hi=mid;
+    }
+    const float edge = (lo+hi)*0.5f;
+    const float span = edge < 0.0f ? -p->paletteMinT : p->paletteMaxT;
+    const float t = ck_clampf(ck_fabsf(edge)/ck_fmaxf(0.00001f,span),0.0f,1.0f);
+    return t;
+}
+
 CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const float* L1,
                      CK_G const float* L2, CK_G const float* L3, CK_G const float* L4, CK_G const float* L5,
                      CK_G const float* L6, CK_G const float* L7, CK_G const float* mask, CK_G float* dst)
@@ -811,7 +880,41 @@ CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const
         bg = orig.g + mg - hmg;
         bb = orig.b + mb - hmb;
     }
-    if (p->cleanFringe) {
+    if (p->usePalette) {
+        const float y = p->lumR * xr + p->lumG * xg + p->lumB * xb;
+        const float cr = xr - y, cg = xg - y, cb = xb - y;
+        const float amount = cr * p->paletteDual[0] + cg * p->paletteDual[1] + cb * p->paletteDual[2];
+        const float a = ck_fmaxf(amount, 0.0f), b = ck_fmaxf(-amount, 0.0f);
+        const float t = p->paletteGradient && ck_fabsf(amount) > 0.000001f && p->saturation > 0.0f
+            ? ck_palette_progress(p,L0,fx,fy,dx,dy,scale,amount) : 0.0f;
+        const float qa = t > 0.0f && p->paletteACurve != 1.0f ? ck_powf(t,p->paletteACurve) : t;
+        const float qb = t > 0.0f && p->paletteBCurve != 1.0f ? ck_powf(t,p->paletteBCurve) : t;
+        const float ta = qa*qa*(3.0f-2.0f*qa);
+        float blendB = qb;
+        const bool middle = b > 0.0f && p->paletteBMiddleAt > 0.0f;
+        const bool last = middle && t >= p->paletteBMiddleAt;
+        if (middle) {
+            const float stop = p->paletteBMiddleAt;
+            blendB = last ? (t-stop)/(1.0f-stop) : t/stop;
+        }
+        const float tb = blendB*blendB*(3.0f-2.0f*blendB);
+        float target[3];
+        for (int c = 0; c < 3; ++c) {
+            const float start = last ? p->paletteBMiddle[c] : p->paletteB[c];
+            const float end = middle && !last ? p->paletteBMiddle[c] : p->paletteBEnd[c];
+            target[c] = a*(p->paletteA[c]+ta*(p->paletteAEnd[c]-p->paletteA[c])) + b*(start+tb*(end-start));
+        }
+        float nr = target[0], ng = target[1], nb = target[2];
+        // Keep the pre-palette luminance and avoid new negative channels. HDR highlights
+        // remain unclipped; the existing Fringe Blur step handles its own final gamut.
+        if (!p->keepLuma) {
+            const float limit = ck_fminf(ck_gain_limit(br + y, nr),
+                                        ck_fminf(ck_gain_limit(bg + y, ng), ck_gain_limit(bb + y, nb)));
+            const float k = ck_clampf(limit, 0.0f, 1.0f);
+            nr *= k; ng *= k; nb *= k;
+        }
+        xr = y + nr; xg = y + ng; xb = y + nb;
+    } else if (p->cleanFringe) {
         // Keep the luminance and the warm/cool part of the dispersion's colour; drop the
         // magenta/green part (thin lines would otherwise lose or keep only the middle of the
         // spectrum and turn pink or green).

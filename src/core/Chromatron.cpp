@@ -31,6 +31,7 @@
 #include "core/Chromatron.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -81,6 +82,61 @@ constexpr int kBaseTaps = 12;
 
 int clampSamples(int n) { return std::max(3, std::min(CK_MAX_TAPS, n)); }
 
+// Narrow each response without changing its total gain or mean displacement.
+// The exponential tilt keeps the mean fixed even near the ends of the spectrum.
+void narrowSpectralResponse(std::vector<Tap>& taps, double requested)
+{
+    if (!std::isfinite(requested) || requested >= 1.0) return;
+    const double width = std::clamp(requested, 0.25, 1.0);
+    for (int channel = 0; channel < 3; ++channel) {
+        double mean = 0.0;
+        for (const auto& tap : taps) mean += tap.w[channel] * tap.t;
+        std::array<double, CK_MAX_TAPS> offsets{}, logWeights{}, weights{};
+        double variance = 0.0;
+        for (size_t i = 0; i < taps.size(); ++i) {
+            offsets[i] = taps[i].t - mean;
+            logWeights[i] = std::log(taps[i].w[channel]);
+            variance += taps[i].w[channel] * offsets[i] * offsets[i];
+        }
+        const double target = variance * width * width;
+        auto evaluate = [&](double power, double tilt) {
+            double peak = -1e300;
+            for (size_t i = 0; i < taps.size(); ++i) {
+                weights[i] = power * logWeights[i] + tilt * offsets[i];
+                peak = std::max(peak, weights[i]);
+            }
+            double total = 0.0, first = 0.0, second = 0.0;
+            for (size_t i = 0; i < taps.size(); ++i) {
+                weights[i] = std::exp(weights[i] - peak);
+                total += weights[i];
+                first += weights[i] * offsets[i];
+                second += weights[i] * offsets[i] * offsets[i];
+            }
+            return std::array<double, 3>{first / total, second / total, total};
+        };
+        auto centred = [&](double power) {
+            double lo = -1.0, hi = 1.0;
+            while (evaluate(power, lo)[0] > 0.0 && lo > -1048576.0) lo *= 2.0;
+            while (evaluate(power, hi)[0] < 0.0 && hi < 1048576.0) hi *= 2.0;
+            for (int i = 0; i < 32; ++i) {
+                const double mid = (lo + hi) * 0.5;
+                if (evaluate(power, mid)[0] < 0.0) lo = mid;
+                else hi = mid;
+            }
+            return evaluate(power, (lo + hi) * 0.5);
+        };
+        double lo = 1.0, hi = 4.0;
+        while (centred(hi)[1] > target && hi < 256.0) hi *= 2.0;
+        for (int i = 0; i < 24; ++i) {
+            const double mid = (lo + hi) * 0.5;
+            if (centred(mid)[1] > target) lo = mid;
+            else hi = mid;
+        }
+        const double total = centred((lo + hi) * 0.5)[2];
+        for (size_t i = 0; i < taps.size(); ++i) taps[i].w[channel] = weights[i] / total;
+    }
+}
+
 std::vector<Tap> aberrationTaps(const Settings& s, double rs, const double lum[3])
 {
     const double lateralPx = std::fabs(s.lateral) * rs;
@@ -102,6 +158,7 @@ std::vector<Tap> aberrationTaps(const Settings& s, double rs, const double lum[3
     double centroid = 0.0;
     for (const Tap& t : taps) centroid += (lum[0] * t.w[0] + lum[1] * t.w[1] + lum[2] * t.w[2]) * t.t;
     for (Tap& t : taps) t.t -= centroid;
+    narrowSpectralResponse(taps, s.fringeSoftness);
 
     // Defocus grows monotonically from the steadier end of the spectrum to the end that
     // disperses more (blue when balanced), never from the middle outwards.
@@ -345,9 +402,109 @@ void setupFringeCleaning(CKParams& p, double balance, bool ap1)
     p.fringeDualZ = (float)(m0[2] / norm);
 }
 
+void setupPalette(CKParams& p, const Settings& s, const std::vector<Tap>& taps, double rs)
+{
+    if (s.palette == FringePalette::Original) return;
+    const double lum[3] = {p.lumR, p.lumG, p.lumB};
+    const bool ap1 = workInAP1(s.space);
+    double axis[3] = {-1.0, 0.0, 1.0};
+    if (s.mode == Mode::Aberration) {
+        fringeAxis(s.balance, axis);
+        for (double& c : axis) c = -c;
+    } else if (s.mode == Mode::Physical) {
+        // Choose the source opponent direction from the actual lens: corrected lenses
+        // can have purple/green residuals instead of the singlet's blue/warm fringes.
+        double shift[3] = {}, blur[3] = {};
+        for (const Tap& tap : taps) {
+            const double wy = kLumRec709[0]*tap.w[0] + kLumRec709[1]*tap.w[1] + kLumRec709[2]*tap.w[2];
+            for (int c = 0; c < 3; ++c) {
+                shift[c] += (tap.w[c]-wy) * tap.t * std::fabs(s.lateralColor) * rs;
+                blur[c] += (tap.w[c]-wy) * tap.sigmaAxial;
+            }
+        }
+        auto orient = [](double v[3]) {
+            const double side = std::fabs(v[2]-v[0]) > 1e-9 ? v[2]-v[0] : v[2]-v[1];
+            if (side < 0.0) for (int c = 0; c < 3; ++c) v[c] = -v[c];
+        };
+        orient(shift); orient(blur);
+        for (int c = 0; c < 3; ++c) axis[c] = shift[c] + blur[c];
+    }
+    auto toWorking = [ap1](const double in[3], double out[3]) {
+        for (int c = 0; c < 3; ++c)
+            out[c] = ap1 ? kRec709ToAP1[c*3]*in[0] + kRec709ToAP1[c*3+1]*in[1] + kRec709ToAP1[c*3+2]*in[2] : in[c];
+    };
+    // Derive the scalar in Rec.709 even for wide-gamut footage, then carry its dual
+    // into the working primaries. This keeps the palette strength consistent in ACES.
+    double y = kLumRec709[0]*axis[0] + kLumRec709[1]*axis[1] + kLumRec709[2]*axis[2];
+    for (double& c : axis) c -= y;
+    double peak = std::max({std::fabs(axis[0]), std::fabs(axis[1]), std::fabs(axis[2])});
+    if (peak < 1e-9) {axis[0] = -1; axis[1] = 0; axis[2] = 1; peak = 1;}
+    for (double& c : axis) c /= peak;
+    const double norm = axis[0]*axis[0] + axis[1]*axis[1] + axis[2]*axis[2];
+    double dual[3];
+    for (int c = 0; c < 3; ++c) dual[c] = 2.0*axis[c]/norm;
+    // AP1 -> Rec.709, inverse of kRec709ToAP1.
+    static const double inverse[9] = {1.705050992696,-0.621792120681,-0.083258871953,
+                                    -0.130256417559,1.140804736548,-0.010548319102,
+                                    -0.024003356839,-0.128968975995,1.152972332847};
+    for (int c = 0; c < 3; ++c)
+        p.paletteDual[c] = (float)(ap1 ? dual[0]*inverse[c] + dual[1]*inverse[3+c] + dual[2]*inverse[6+c] : dual[c]);
+    const FringeColors colors = s.palette == FringePalette::Custom
+        ? FringeColors{s.colorA,s.colorB,s.colorAEnd,s.colorBEnd,s.gradient,s.gradientMidpointA,
+                       s.gradientMidpointB,s.useColorBMiddle,s.colorBMiddle} : paletteColors(s.palette);
+    auto encode = [&](FringeColor color, float out[3]) {
+        const double rgb[3] = {color.r,color.g,color.b};
+        double linear[3], work[3];
+        for (int c = 0; c < 3; ++c) {
+            const double v = std::isfinite(rgb[c]) ? std::max(0.0,std::min(1.0,rgb[c])) : 0.0;
+            linear[c] = v <= 0.04045 ? v/12.92 : std::pow((v+0.055)/1.055,2.4);
+        }
+        toWorking(linear,work);
+        const double value = lum[0]*work[0] + lum[1]*work[1] + lum[2]*work[2];
+        for (int c = 0; c < 3; ++c) out[c] = (float)(work[c]-value);
+    };
+    encode(colors.a,p.paletteA); encode(colors.b,p.paletteB);
+    encode(colors.aEnd,p.paletteAEnd); encode(colors.bEnd,p.paletteBEnd);
+    p.paletteGradient = colors.gradient ? 1 : 0;
+    if (colors.gradient && colors.useBMiddle) {
+        encode(colors.bMiddle, p.paletteBMiddle);
+        p.paletteBMiddleAt = static_cast<float>(std::isfinite(colors.midpointB)
+            ? std::clamp(colors.midpointB, 0.05, 0.95) : 0.5);
+    }
+    auto curve = [](double midpoint) {
+        const double m = std::isfinite(midpoint) ? std::max(0.05,std::min(0.95,midpoint)) : 0.5;
+        return (float)(std::log(0.5)/std::log(m));
+    };
+    p.paletteACurve = curve(colors.midpointA); p.paletteBCurve = curve(colors.midpointB);
+    for (const Tap& tap : taps) {
+        p.paletteMinT = std::min(p.paletteMinT,(float)tap.t);
+        p.paletteMaxT = std::max(p.paletteMaxT,(float)tap.t);
+    }
+    p.usePalette = 1;
+}
+
 int blurRadius(float sigma) { return sigma < 0.05f ? 0 : std::min(2048, (int)std::ceil(3.0f * sigma)); }
 
 }  // namespace
+
+FringeColors paletteColors(FringePalette palette)
+{
+    static const unsigned colors[][4] = {
+        {0x355FD3,0xE2AB43,0x355FD3,0xE2AB43}, {0x355FD3,0xE2AB43,0x355FD3,0xE2AB43},
+        {0x83BEDD,0xD86140,0x83BEDD,0xD86140}, {0x728FA5,0xBB7A55,0x728FA5,0xBB7A55},
+        {0x344AA7,0xD8B35C,0x344AA7,0xD8B35C},
+        {0x10103D,0xC36139,0x78AB99,0xE8D2A3}, {0x253475,0xA94E2E,0x87B6EF,0xF0D592},
+        {0x355FD3,0xE2AB43,0x355FD3,0xE2AB43},
+        {0x1D3367,0x704D32,0x567F8F,0xA89A60}
+    };
+    static_assert(sizeof(colors) / sizeof(colors[0]) == kFringePaletteCount);
+    const int i = std::clamp(static_cast<int>(palette), 0, kFringePaletteCount - 1);
+    auto rgb = [](unsigned c) {return FringeColor{((c>>16)&255)/255.0,((c>>8)&255)/255.0,(c&255)/255.0};};
+    if (palette == FringePalette::LensCoating)
+        return {rgb(colors[i][0]), rgb(colors[i][1]), rgb(colors[i][2]), rgb(colors[i][3]),
+                true, 0.65, 0.55, true, rgb(0x8C9459)};
+    return {rgb(colors[i][0]),rgb(colors[i][1]),rgb(colors[i][2]),rgb(colors[i][3]),i==5 || i==6,i==5 ? 0.75 : 0.5,0.5};
+}
 
 bool colorSpaceFromName(const std::string& name, ColorSpace& out)
 {
@@ -487,7 +644,9 @@ Plan buildPlan(const Settings& s, const Geometry& g)
         const double half = 0.5 * s.distance * rs;
         p.dirX = (float)(std::cos(a) * half);
         p.dirY = (float)(std::sin(a) * half);
-        taps = separationTaps(s, rs);
+        Settings split = s;
+        if (s.palette != FringePalette::Original) split.pair = ColorPair::RedBlue;
+        taps = separationTaps(split, rs);
     } else {
         const bool physical = s.mode == Mode::Physical;
         p.mode = physical ? CK_MODE_PHYSICAL : CK_MODE_ABERRATION;
@@ -510,6 +669,7 @@ Plan buildPlan(const Settings& s, const Geometry& g)
             setupFringeCleaning(p, s.balance, workInAP1(s.space));
         }
     }
+    setupPalette(p, s, taps, rs);
     // Fringe Blur: keep the luminance of the unblurred taps (the physical lens defocuses for real).
     p.keepLuma = s.mode != Mode::Physical && s.channelBlur > 0.0 ? 1 : 0;
 

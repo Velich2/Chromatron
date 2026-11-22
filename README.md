@@ -21,7 +21,7 @@ close the host and copy them:
 
 Nuke also scans the shared OFX folders listed for Resolve. Keep one visible copy of the bundle.
 The OFX archives include `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` test script.
-Windows also has a dedicated `Chromatron-1.3.2-Nuke-Windows.zip` download with Nuke setup instructions
+Windows also has a dedicated `Chromatron-1.4.0-Nuke-Windows.zip` download with Nuke setup instructions
 and the same fixed binary as the Windows OFX archive. Replace an older shared copy when upgrading.
 
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
@@ -73,7 +73,7 @@ options: `chromatron_cli --synthetic 1920x1080 out.ppm <options>`.
 ### RGB Separation
 | Parameter | What it does |
 |---|---|
-| Color Pair | Red/Cyan, Green/Magenta, Blue/Yellow, Red/Blue (green stays in place) |
+| Color Pair | In Fringe Colors with Palette = Original: Red/Cyan, Green/Magenta, Blue/Yellow, Red/Blue (green stays in place) |
 | Angle | direction in which the two channel groups move apart (in opposite directions) |
 | Distance | distance between the groups, px |
 | Spread | 0 – hard digital offset, 1 – soft prism-like smear of each group |
@@ -89,13 +89,14 @@ effect grows towards the frame corners.
 | Parameter | What it does |
 |---|---|
 | Lateral | spread of the spectrum at the frame corner, px; the sign swaps the warm and cool sides |
-| Fringe Balance | −1 red-orange / cyan · 0 orange / teal · +1 golden / azure |
+| Fringe Softness | 100% keeps the original softness. Lower values sharpen each colour's transition while preserving its average displacement. Separate from Fringe Blur. |
+| Fringe Balance | In Fringe Colors: Original retains the existing warm/cool axis; styled palettes keep their selected colours |
 
 | `--mode abr --lateral 24` | Fringe Balance +1, `--balance 1` |
 |---|---|
 | ![](docs/examples/aberration.png) | ![](docs/examples/aberration-balance.png) |
 
-**No magenta, purple or muddy green.** Dispersion is monotonic along the spectrum, and the magenta↔green component
+With **Palette = Original**, dispersion is monotonic along the spectrum, and the magenta↔green component
 is removed from the chromatic part of the displacement (luminance preserved). Fringes stay on the warm/cool axis set
 by Fringe Balance, thin lines included, where a plain spectral shift turns pink or green. Tests check this for every
 Balance value and for ACES.
@@ -132,6 +133,50 @@ halo is orange; focused on red, it is blue.
 |---|---|---|
 | ![](docs/examples/physical-axial-singlet.png) | ![](docs/examples/physical-focus-450.png) | ![](docs/examples/physical-focus-650.png) |
 
+### Fringe Colors
+
+Version 1.4.0 adds a shared **Fringe Colors** group for all three modes. **Original** is the default
+and preserves the previous rendering, including the existing RGB Color Pair choices and Lens Aberration
+Fringe Balance. Saved parameters keep their identifiers. Palette and gradient changes affect only the
+dispersion colour, not flat coloured areas; image luminance and alpha are preserved.
+
+| Palette | Colour direction |
+|---|---|
+| Original | Existing RGB pairs or lens spectrum |
+| Cobalt / Amber | Rich blue and amber gold |
+| Glacier / Vermilion | Pale icy blue and orange-red |
+| Steel / Copper | Muted steel blue and copper |
+| Deep Blue / Saffron | Deep blue and restrained yellow-gold |
+| Vintage Glass | Midnight blue to light petrol; copper-red to cream-gold |
+| Coated Glass | Indigo to light blue; burnt copper-orange to pale gold |
+| Custom | Your own pair, or two colours per side with Gradient enabled |
+| Lens Coating | Deep blue to muted cyan; copper amber through olive to muted gold |
+
+Choose a preset to populate its colour controls. Editing a colour, Gradient or a transition position
+switches to **Custom**, retaining the other selected colours. **Color A** and **Color B** are the first
+colours; **Color A End** and **Color B End** are enabled with Gradient. Premiere hides inactive colour
+rows; After Effects keeps them visible and disabled. Gradients run from the first colour
+near the object edge toward the End colour outward. Pure axial defocus uses the halo coverage instead
+of a shifted edge. The preset endpoints are display-sRGB values and are carried into the working
+primaries for ACES and wide-gamut footage; they are not a promise of exact output pixel values.
+
+**Color A Transition** and **Color B Transition** set the position of the equal colour mix from 5 to 95%.
+Higher values keep the first colour across more of the fringe. Vintage Glass uses 75% on its cool side
+to extend the dark blue; its warm side and Coated Glass use 50%. **Fringe Saturation** is also in this
+group. **Reset** restores Original and the colour defaults without resetting the spatial controls.
+With **Use Color B Middle** enabled, **Color B Transition** positions an optional third colour on the warm side.
+Lens Coating uses this option for its olive tint. Select Lens Coating and set **Fringe Softness** to 50%
+in Lens Aberration for the sharper reference look. The reference render uses Fringe Saturation 1.8 (180% in Adobe).
+
+CLI examples:
+```
+chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 24 --palette cobalt
+chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 24 --palette vintage
+chromatron_cli --synthetic 1920x1080 out.ppm --mode sep --distance 12 --palette coated
+chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 48 --palette lens-coating --fringe-softness 50 --saturation 1.8 --space linear
+chromatron_cli --synthetic 1920x1080 out.ppm --mode abr --lateral 24 --palette custom --color-a 10103D --color-a-end 78AB99 --color-b C36139 --color-b-end E8D2A3 --gradient --transition-a 75
+```
+
 ### Common
 **Edge Mask** – every mode:
 
@@ -155,7 +200,6 @@ Whole frame, `--mode abr --lateral 24`:
 | Falloff | how the lens modes grow from the optical centre: 1 – evenly, higher – a clean centre and strong corners. The fringe at the frame corner stays the same |
 | Anamorphic | 0 – round lens; 1 – horizontal fringes only, as with an anamorphic lens; −1 – vertical only |
 | Highlight Boost | stops of light restored to clipped highlights before the optics, so fringes glow out of them instead of tinting the white; 0 – off. For SDR and display-referred footage: HDR and scene-linear sources already carry their highlights |
-| Fringe Saturation | strength of the fringe colour, independent of its width: 0 – no colour, 100 % – natural, 200 % – vivid |
 | Fringe Blur | softens the colour of the fringes, px; luminance and image detail stay sharp, and so do colour edges in the picture itself (only the fringe is blurred). At values close to the fringe width the colour turns grey. Not available in Physical Lens, where Axial Color is the defocus |
 | Mix | blend with the original |
 | Use GPU | use an available GPU. Nuke uploads CPU images to a private GPU queue and falls back to CPU on failure. Disable for CPU rendering |
@@ -308,11 +352,14 @@ artifacts. After Effects is not built in CI: the Adobe SDKs cannot be put in the
 ## Status
 * Kernels and the CPU and OpenCL backends are covered by tests (OpenCL matches the CPU, float and 16-bit float
   frames, all three modes with and without the look controls); CI runs them on Linux, Windows and macOS.
-* After Effects 2026 (Windows): rendering checked (CPU path, scripted renders).
+* After Effects 2026 (Windows): rendering checked in earlier builds (CPU path, scripted renders).
 * Premiere Pro (Windows): CPU rendering and the GPU filter checked. The user confirmed the 1.3.2
   correction for the reported UHD-to-720p export scaling issue.
-* DaVinci Resolve (Windows): checked. The macOS and Linux bundles build and pass the tests in CI; they have not
+* DaVinci Resolve (Windows): checked in earlier builds. The macOS and Linux bundles build and pass the tests in CI; they have not
   been checked inside Resolve on those systems yet.
 * Nuke 15.1v4 (Windows, RTX 4090): the user confirmed the 1.3.1 compatibility build works. Geometry,
   linear defaults, private GPU rendering and the bundled MSVC runtime are covered by automated tests.
   Other Nuke versions and operating systems still need in-host validation. See [Nuke setup](docs/NUKE.md).
+
+The 1.4.0 colour controls and Fringe Softness are covered by automated rendering and Adobe parameter tests.
+In-host validation of the new controls and the reported Premiere Program Monitor zoom hang is pending.

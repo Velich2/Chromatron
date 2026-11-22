@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Chromatron VERSION 1.3.2 LANGUAGES C CXX)
+project(Chromatron VERSION 1.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -152,4 +152,21 @@ if(CHROMATRON_BUILD_TOOLS)
         set_source_files_properties(tests/MetalHarness.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     endif()
     add_test(NAME chromatron_tests COMMAND chromatron_tests)
+    if(WIN32 AND CHROMATRON_BUILD_AE)
+        # Use the installed SDK and actual .aex without launching a host application.
+        get_target_property(AE_TEST_INCLUDES chromatron_ae INCLUDE_DIRECTORIES)
+        add_executable(chromatron_ae_param_tests tests/test_ae_params.cpp)
+        target_include_directories(chromatron_ae_param_tests PRIVATE src ${AE_TEST_INCLUDES})
+        target_compile_definitions(chromatron_ae_param_tests PRIVATE MSWindows WIN32 _WINDOWS NOMINMAX
+                                                                    _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+        add_dependencies(chromatron_ae_param_tests chromatron_ae)
+        add_test(NAME chromatron_ae_params COMMAND chromatron_ae_param_tests $<TARGET_FILE:chromatron_ae>)
+        if(PR_SDK_DIR)
+            add_executable(chromatron_premiere_color_tests tests/test_premiere_colors.cpp)
+            target_include_directories(chromatron_premiere_color_tests PRIVATE src ${PR_SDK_DIR}/Examples/Headers)
+            target_compile_definitions(chromatron_premiere_color_tests PRIVATE PRWIN_ENV
+                                                                             _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+            add_test(NAME chromatron_premiere_colors COMMAND chromatron_premiere_color_tests)
+        endif()
+    endif()
 endif()
