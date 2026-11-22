@@ -1300,15 +1300,68 @@ void testFringePalettes()
     expect(finite,"palettes keep neutral/HDR edge renders finite and non-negative");
 
     const Frame step=makeFrame(128,32,[](int x,int,float* p) {p[0]=p[1]=p[2]=x<64 ? 0.02f : 0.9f;p[3]=1;});
+    const Frame warmStep=makeFrame(128,32,[](int x,int,float* p) {p[0]=p[1]=p[2]=x<64 ? 0.9f : 0.02f;p[3]=1;});
     Settings s; s.space=ColorSpace::LinearRec709;s.distance=32;s.angleDeg=0;s.spread=0;s.palette=FringePalette::CoatedGlass;
-    const auto p=buildPlan(s,fullGeometry(step.w,step.h)).params;
-    float previous=-1; bool ordered=true;
-    for (float x : {65.0f,69.0f,73.0f,77.0f}) {
-        const float progress=ck_palette_progress(&p,step.px.data(),x,16,0,0,0,0.5f);
-        ordered &= progress>previous && progress>=0 && progress<=1;
-        previous=progress;
+    const auto stepGeometry = fullGeometry(step.w, step.h);
+    const auto p = buildPlan(s, stepGeometry).params;
+    bool ordered = true;
+    for (const Frame* edge : {&step, &warmStep}) {
+        float previous = -1.0f;
+        for (int x : {49, 53, 57, 61, 65, 69, 73, 77}) {
+            const float sample = float(edge == &step ? x : 127 - x);
+            const float progress = ck_palette_progress(&p, edge->px.data(), sample, 16, 0, 0, 0, 0.5f);
+            if (x == 49) ordered &= progress < 0.1f;
+            ordered &= progress > previous && progress >= 0.0f && progress <= 1.0f;
+            previous = progress;
+        }
+        ordered &= previous > 0.9f;
     }
-    expect(ordered && previous>0.8f,"hard Separation fringes progress spatially from inner to outer colour");
+    expect(ordered, "gradient crosses the full fringe once, from the dark side to the light side");
+
+    bool solidStartsPreserved = true, solidEndsVisible = true;
+    for (FringePalette preset : {FringePalette::CobaltAmber, FringePalette::GlacierVermilion,
+                                 FringePalette::SteelCopper, FringePalette::DeepBlueSaffron}) {
+        const auto colors = paletteColors(preset);
+        s.palette = preset;
+        const auto solid = runCpu(s, stepGeometry, step.px);
+        Settings custom = s;
+        custom.palette = FringePalette::Custom;
+        custom.colorA = custom.colorAEnd = colors.a;
+        custom.colorB = custom.colorBEnd = colors.b;
+        solidStartsPreserved &= !colors.gradient &&
+            maxDiff(solid, runCpu(custom, stepGeometry, step.px)) == 0.0f;
+        custom.gradient = true;
+        custom.colorAEnd = colors.aEnd;
+        custom.colorBEnd = colors.bEnd;
+        solidEndsVisible &= maxDiff(solid, runCpu(custom, stepGeometry, step.px)) > 0.02f;
+    }
+    expect(solidStartsPreserved && solidEndsVisible, "solid presets keep their colours and gain distinct gradient ends");
+
+    Settings middle = s;
+    middle.palette = FringePalette::Custom;
+    middle.gradient = true;
+    middle.colorB = {0.65, 0.23, 0.08};
+    middle.colorBEnd = {0.95, 0.67, 0.2};
+    middle.colorBMiddle = {0.05, 0.72, 0.62};
+    const auto twoStops = runCpu(middle, stepGeometry, warmStep.px);
+    Settings constantMiddle = middle;
+    constantMiddle.colorB = constantMiddle.colorBEnd = middle.colorBMiddle;
+    const auto middleReference = runCpu(constantMiddle, stepGeometry, warmStep.px);
+    const auto middleParams = buildPlan(middle, stepGeometry).params;
+    middle.useColorBMiddle = true;
+    int checkedStops = 0;
+    bool correctStop = true;
+    for (int x : {52, 56, 60, 68, 72, 76}) {
+        const size_t offset = (size_t(16)*step.w + x)*4;
+        if (std::fabs(twoStops[offset+1] - middleReference[offset+1]) < 0.01f) continue;
+        middle.gradientMidpointB = ck_palette_progress(&middleParams, warmStep.px.data(), float(x), 16, 0, 0, 0, 0.5f);
+        if (middle.gradientMidpointB < 0.05 || middle.gradientMidpointB > 0.95) continue;
+        const auto threeStops = runCpu(middle, stepGeometry, warmStep.px);
+        for (int c = 0; c < 4; ++c)
+            correctStop &= std::fabs(threeStops[offset+c] - middleReference[offset+c]) < 0.0001f;
+        ++checkedStops;
+    }
+    expect(checkedStops >= 2 && correctStop, "Color B Transition places the middle colour at the selected position");
     s.palette=FringePalette::VintageGlass;
     auto colors=paletteColors(s.palette);
     auto light=[](FringeColor c) {return 0.2126*c.r+0.7152*c.g+0.0722*c.b;};
@@ -1351,9 +1404,9 @@ void testFringePalettes()
     lens.colorAEnd = coating.aEnd; lens.colorBEnd = coating.bEnd;
     lens.gradientMidpointA = coating.midpointA; lens.gradientMidpointB = coating.midpointB;
     lens.colorBMiddle = coating.bMiddle;
-    const auto twoStops = runCpu(lens, geometry, chart.px);
+    const auto lensTwoStops = runCpu(lens, geometry, chart.px);
     lens.useColorBMiddle = true;
-    expect(maxDiff(twoStops, runCpu(lens, geometry, chart.px)) > 0.01f,
+    expect(maxDiff(lensTwoStops, runCpu(lens, geometry, chart.px)) > 0.01f,
            "Lens Coating's middle stop visibly changes the warm fringe");
 
     s.palette=FringePalette::Custom;s.colorA={NAN,INFINITY,-1};s.colorB={1.5,0.3,0.2};s.gradient=true;

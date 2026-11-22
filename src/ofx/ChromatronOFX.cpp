@@ -146,28 +146,35 @@ public:
     void changedParam(const InstanceChangedArgs& args, const std::string& name) override
     {
         if (!syncingColors_ && args.reason == eChangeUserEdit) {
-            if (name == kPalette) {
+            const bool paletteEdit = name == kPalette;
+            const bool gradientEdit = name == kGradient;
+            if (paletteEdit || gradientEdit) {
                 int index = 0; palette_->getValueAtTime(args.time,index);
                 if (index > 0 && index < cx::kFringePaletteCount && index != (int)cx::FringePalette::Custom) {
                     const auto colors = cx::paletteColors((cx::FringePalette)index);
-                    syncingColors_ = true;
-                    try {
-                        beginEditBlock("Change Fringe Palette");
-                        auto set = [&](RGBParam* p, cx::FringeColor c) {p->setValueAtTime(args.time,c.r,c.g,c.b);};
-                        set(colorA_,colors.a); set(colorB_,colors.b);
-                        set(colorAEnd_,colors.aEnd); set(colorBEnd_,colors.bEnd);
-                        set(colorBMiddle_, colors.bMiddle);
-                        useBMiddle_->setValueAtTime(args.time, colors.useBMiddle);
-                        gradient_->setValueAtTime(args.time,colors.gradient);
-                        midpointA_->setValueAtTime(args.time,100*colors.midpointA);
-                        midpointB_->setValueAtTime(args.time,100*colors.midpointB);
-                        endEditBlock();
-                    } catch (...) {syncingColors_=false; throw;}
-                    syncingColors_ = false;
+                    if (paletteEdit || (!colors.gradient && gradient_->getValueAtTime(args.time))) {
+                        syncingColors_ = true;
+                        try {
+                            beginEditBlock("Change Fringe Palette");
+                            auto set = [&](RGBParam* p, cx::FringeColor c) {p->setValueAtTime(args.time,c.r,c.g,c.b);};
+                            set(colorAEnd_,colors.aEnd); set(colorBEnd_,colors.bEnd);
+                            if (paletteEdit) {
+                                set(colorA_,colors.a); set(colorB_,colors.b);
+                                set(colorBMiddle_, colors.bMiddle);
+                                useBMiddle_->setValueAtTime(args.time, colors.useBMiddle);
+                                gradient_->setValueAtTime(args.time,colors.gradient);
+                                midpointA_->setValueAtTime(args.time,100*colors.midpointA);
+                                midpointB_->setValueAtTime(args.time,100*colors.midpointB);
+                            }
+                            endEditBlock();
+                        } catch (...) {syncingColors_=false; throw;}
+                        syncingColors_ = false;
+                    }
                 }
-            } else if (name == kColorA || name == kColorB || name == kColorAEnd || name == kColorBEnd ||
-                       name == kMidpointA || name == kMidpointB || name == kGradient ||
-                       name == kUseBMiddle || name == kColorBMiddle) {
+            }
+            if (name == kColorA || name == kColorB || name == kColorAEnd || name == kColorBEnd ||
+                name == kMidpointA || name == kMidpointB || gradientEdit ||
+                name == kUseBMiddle || name == kColorBMiddle) {
                 palette_->setValueAtTime(args.time,(int)cx::FringePalette::Custom);
                 updateEnabled();
             }
@@ -688,9 +695,9 @@ void ChromatronFactory::describeInContext(ImageEffectDescriptor& desc, ContextEn
     page->addChild(*pair);
     BooleanParamDescriptor* gradient = desc.defineBooleanParam(kGradient);
     gradient->setLabels("Gradient", "Gradient", "Gradient");
-    gradient->setHint("Blend each fringe from its first colour at the object edge to its End colour outward.");
+    gradient->setHint("Blend each fringe from its first colour on the darker side of an edge to its End colour on the lighter side.");
     gradient->setDefault(false); gradient->setParent(*colors); page->addChild(*gradient);
-    const auto initial = cx::paletteColors(cx::FringePalette::CobaltAmber);
+    const auto initial = cx::paletteColors(cx::FringePalette::Custom);
     auto defineColor = [&](const char* name, const char* label, cx::FringeColor value) {
         RGBParamDescriptor* p = desc.defineRGBParam(name);
         p->setLabels(label,label,label);

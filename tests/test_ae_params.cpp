@@ -51,6 +51,8 @@ static void exercise(Entry entry,A_long app)
     check(out.num_params==P_NUM_PARAMS && host.values.size()==P_NUM_PARAMS,"Registered count does not match GPU indices");
     auto& v=host.values;
     auto available=[&](int index) {return (v[index].ui_flags&(app=='PrMr'?PF_PUI_INVISIBLE:PF_PUI_DISABLED))==0;};
+    for (int index : {P_PALETTE, P_GRADIENT, P_USE_B_MIDDLE, P_MIDPOINT_A, P_MIDPOINT_B})
+        check(v[index].flags & PF_ParamFlag_SUPERVISE, "Adobe will not notify the plug-in about this colour edit");
     for(const auto& item : std::vector<std::pair<int,const char*>>{{P_PALETTE,"Palette"},{P_PAIR,"Color Pair"},{P_GRADIENT,"Gradient"},
              {P_COLOR_A,"Color A"},{P_COLOR_A_END,"Color A End"},{P_COLOR_B,"Color B"},{P_COLOR_B_END,"Color B End"},
              {P_MIDPOINT_A,"Color A Transition"},{P_MIDPOINT_B,"Color B Transition"},{P_BALANCE,"Fringe Balance"},{P_SATURATION,"Fringe Saturation"}})
@@ -62,6 +64,23 @@ static void exercise(Entry entry,A_long app)
         check(entry(PF_Cmd_USER_CHANGED_PARAM,&in,&out,params.data(),nullptr,&extra)==0,"Supervised edit failed");};
     check(entry(PF_Cmd_UPDATE_PARAMS_UI,&in,&out,params.data(),nullptr,nullptr)==0,"Initial UI update failed");
     check(available(P_PAIR) && !available(P_COLOR_A),"Original Separation availability is incorrect");
+    for (int preset = 2; preset <= 5; ++preset) {
+        v[P_PALETTE].u.pd.value = preset;
+        edit(P_PALETTE);
+        check(!v[P_GRADIENT].u.bd.value && !available(P_COLOR_A_END), "Solid preset enables Gradient by default");
+        const auto a = v[P_COLOR_A].u.cd.value;
+        const auto b = v[P_COLOR_B].u.cd.value;
+        // A project saved before the fix can have matching start and end colours.
+        v[P_COLOR_A_END].u.cd.value = a;
+        v[P_COLOR_B_END].u.cd.value = b;
+        v[P_GRADIENT].u.bd.value = TRUE;
+        edit(P_GRADIENT);
+        check(v[P_PALETTE].u.pd.value == 8 && available(P_COLOR_A_END) && available(P_COLOR_B_END),
+              "Gradient did not switch a solid preset to editable Custom colours");
+        check(v[P_COLOR_A].u.cd.value.blue == a.blue && v[P_COLOR_B].u.cd.value.red == b.red &&
+              v[P_COLOR_A_END].u.cd.value.blue != a.blue && v[P_COLOR_B_END].u.cd.value.red != b.red,
+              "Gradient did not preserve the starts and populate distinct ends");
+    }
     v[P_PALETTE].u.pd.value=6;edit(P_PALETTE);
     check(v[P_COLOR_A].u.cd.value.red==16 && v[P_COLOR_A].u.cd.value.green==16 && v[P_COLOR_A].u.cd.value.blue==61,"Vintage start differs from approved palette");
     check(v[P_GRADIENT].u.bd.value && v[P_MIDPOINT_A].u.fs_d.value==75 && v[P_MIDPOINT_B].u.fs_d.value==50,"Vintage gradient transition was not populated");
@@ -79,6 +98,14 @@ static void exercise(Entry entry,A_long app)
           "Lens Coating did not expose the warm middle stop");
     check(v[P_COLOR_A].u.cd.value.blue==103 && v[P_COLOR_B_MIDDLE].u.cd.value.green==148 &&
           std::fabs(v[P_MIDPOINT_B].u.fs_d.value-55)<1e-9,"Lens Coating colours or stop position differ");
+    v[P_USE_B_MIDDLE].u.bd.value = FALSE;
+    edit(P_USE_B_MIDDLE);
+    check(v[P_PALETTE].u.pd.value == 8 && !available(P_COLOR_B_MIDDLE) && v[P_GRADIENT].u.bd.value,
+          "Turning off the middle colour did not keep the two-stop gradient");
+    v[P_USE_B_MIDDLE].u.bd.value = TRUE;
+    edit(P_USE_B_MIDDLE);
+    check(available(P_COLOR_B_MIDDLE) && v[P_COLOR_B_MIDDLE].u.cd.value.green == 148,
+          "Turning the middle colour back on did not restore its control and value");
     v[P_COLOR_A].u.cd.value.green=60;edit(P_COLOR_A);
     check(v[P_PALETTE].u.pd.value==8 && v[P_USE_B_MIDDLE].u.bd.value &&
           v[P_COLOR_B_MIDDLE].u.cd.value.green==148,"Custom edit lost the middle stop");
