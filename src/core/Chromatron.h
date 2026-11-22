@@ -16,6 +16,20 @@ enum class LensCorrection { Singlet = 0, Achromat = 1, Apochromat = 2 };
 // Which channels travel in opposite directions in RGB separation mode.
 enum class ColorPair { RedCyan = 0, GreenMagenta = 1, BlueYellow = 2, RedBlue = 3 };
 
+// Stored choice indices: append new palettes without reordering existing entries.
+enum class FringePalette { Original = 0, CobaltAmber, GlacierVermilion, SteelCopper, DeepBlueSaffron,
+                           VintageGlass, CoatedGlass, Custom, LensCoating };
+constexpr int kFringePaletteCount = static_cast<int>(FringePalette::LensCoating) + 1;
+struct FringeColor { double r, g, b; };  // display sRGB, 0..1, independent of the footage encoding
+struct FringeColors {
+    FringeColor a, b, aEnd, bEnd;
+    bool gradient;
+    double midpointA = 0.5, midpointB = 0.5;
+    bool useBMiddle = false;
+    FringeColor bMiddle = {140.0/255.0, 148.0/255.0, 89.0/255.0};
+};
+FringeColors paletteColors(FringePalette palette);
+
 // Encoding of the images the host hands over. The optics always run on linear light:
 // ACES and DaVinci Wide Gamut inputs are processed in ACEScg (AP1), the rest in linear
 // Rec.709. New values are only ever appended (hosts store the index in projects).
@@ -45,6 +59,7 @@ struct Settings {
     // Lens aberration
     double lateral = 5.0;    // px between spectrum ends at the frame corner (sign swaps warm/cool sides)
     double balance = 0.0;    // -1 = red end disperses (red/cyan), +1 = blue end disperses (blue/yellow)
+    double fringeSoftness = 1.0; // relative width of each channel's spectral response
 
     // Physical lens: glass dispersion (Cauchy), CIE 1931 spectrum, lateral + axial colour
     LensCorrection correction = LensCorrection::Singlet;
@@ -62,6 +77,15 @@ struct Settings {
     double anamorphic = 0.0;       // lens modes: 1 = horizontal displacement only, -1 = vertical only
     double highlightBoost = 0.0;   // stops added to white before the optics (clipped footage spills light)
     double fringeSaturation = 1.0; // gain of the colour the dispersion adds
+    FringePalette palette = FringePalette::Original;
+    FringeColor colorA = {53.0/255.0, 95.0/255.0, 211.0/255.0};
+    FringeColor colorB = {226.0/255.0, 171.0/255.0, 67.0/255.0};
+    bool gradient = false;
+    FringeColor colorAEnd = colorA;
+    FringeColor colorBEnd = colorB;
+    double gradientMidpointA = 0.5, gradientMidpointB = 0.5;
+    bool useColorBMiddle = false;
+    FringeColor colorBMiddle = {140.0/255.0, 148.0/255.0, 89.0/255.0};
     double channelBlur = 0.0;  // Fringe Blur: px blur of the fringe colour; luminance stays sharp
     double mix = 1.0;
 };

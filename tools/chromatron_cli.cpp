@@ -9,6 +9,9 @@
 //   --correction singlet|achromat|apo  --lateral-color PX  --axial PX  --focus NM
 //   --cx 0..1 --cy 0..1  --threshold 0..1  --softness 0..1  --show-mask  --blur PX  --mix 0..1
 //   --falloff 1..8  --anamorphic -1..1  --highlights STOPS  --saturation 0..10
+//   --palette original|cobalt|glacier|steel|saffron|vintage|coated|custom|lens-coating
+//   --color-a RRGGBB --color-b RRGGBB --color-a-end RRGGBB --color-b-end RRGGBB --gradient
+//   --transition-a PERCENT --transition-b PERCENT --color-b-middle RRGGBB --fringe-softness PERCENT
 //   --space linear|srgb|rec709|acescg|acescct|acescc|aces2065|dwg|dwglinear|rec709scene
 //           (encoding of the pixels; rec709 = gamma 2.4 / BT.1886)
 
@@ -292,6 +295,7 @@ int main(int argc, char** argv)
             else if (a == "--distance") s.distance = std::stod(next());
             else if (a == "--spread") s.spread = std::stod(next());
             else if (a == "--lateral") s.lateral = std::stod(next());
+            else if (a == "--fringe-softness") s.fringeSoftness = std::stod(next()) / 100.0;
             else if (a == "--balance") s.balance = std::stod(next());
             else if (a == "--cx") cx = std::stod(next());
             else if (a == "--cy") cy = std::stod(next());
@@ -304,6 +308,40 @@ int main(int argc, char** argv)
             else if (a == "--anamorphic") s.anamorphic = std::stod(next());
             else if (a == "--highlights") s.highlightBoost = std::stod(next());
             else if (a == "--saturation") s.fringeSaturation = std::stod(next());
+            else if (a == "--palette") {
+                const std::string value = next();
+                const char* names[] = {"original","cobalt","glacier","steel","saffron","vintage","coated","custom","lens-coating"};
+                static_assert(sizeof(names)/sizeof(names[0]) == kFringePaletteCount);
+                bool found = false;
+                for (int i = 0; i < kFringePaletteCount; ++i) if (value == names[i]) {s.palette = (FringePalette)i; found = true;}
+                if (!found) throw std::runtime_error("unknown palette " + value);
+                if (s.palette != FringePalette::Original && s.palette != FringePalette::Custom) {
+                    const auto colors = paletteColors(s.palette);
+                    s.colorA=colors.a;s.colorB=colors.b;s.colorAEnd=colors.aEnd;s.colorBEnd=colors.bEnd;
+                    s.gradient=colors.gradient;s.gradientMidpointA=colors.midpointA;s.gradientMidpointB=colors.midpointB;
+                    s.useColorBMiddle = colors.useBMiddle;
+                    s.colorBMiddle = colors.bMiddle;
+                }
+            } else if (a == "--color-a" || a == "--color-b" || a == "--color-a-end" ||
+                       a == "--color-b-end" || a == "--color-b-middle") {
+                std::string value = next();
+                if (!value.empty() && value[0] == '#') value.erase(0,1);
+                if (value.size() != 6 || value.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+                    throw std::runtime_error("colour must contain six hexadecimal digits");
+                const unsigned rgb = (unsigned)std::stoul(value,nullptr,16);
+                const FringeColor color{((rgb>>16)&255)/255.0,((rgb>>8)&255)/255.0,(rgb&255)/255.0};
+                if (a == "--color-a") s.colorA = color;
+                else if (a == "--color-b") s.colorB = color;
+                else if (a == "--color-a-end") s.colorAEnd = color;
+                else if (a == "--color-b-end") s.colorBEnd = color;
+                else {s.colorBMiddle = color; s.useColorBMiddle = true;}
+                s.palette = FringePalette::Custom;
+            } else if (a == "--gradient") {s.gradient = true;s.palette = FringePalette::Custom;}
+            else if (a == "--transition-a" || a == "--transition-b") {
+                const double midpoint = std::stod(next())/100.0;
+                if (a == "--transition-a") s.gradientMidpointA=midpoint; else s.gradientMidpointB=midpoint;
+                s.palette=FringePalette::Custom;
+            }
             else if (a == "--backend") backend = next();
             else if (a == "--space") {
                 const std::string v = next();
