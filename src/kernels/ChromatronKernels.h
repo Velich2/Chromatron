@@ -487,10 +487,15 @@ CK_FN float ck_tone(float v)
     return 1.5f * v / (0.5f + v);
 }
 
+CK_FN float ck_luma_value(float red, float green, float blue, CK_G const float* pixel)
+{
+    return ck_tone(red * pixel[0] + green * pixel[1] + blue * pixel[2]);
+}
+
 CK_FN void ck_luma(int x, int y, CK_PARAMS p, CK_G const float* work, CK_G float* luma)
 {
     const int i = y * p->srcWidth + x;
-    luma[i] = ck_tone(p->lumR * work[i * 4 + 0] + p->lumG * work[i * 4 + 1] + p->lumB * work[i * 4 + 2]);
+    luma[i] = ck_luma_value(p->lumR, p->lumG, p->lumB, work + 4*i);
 }
 
 // Index of the sample i pixels away along the pass direction (clamp-to-edge).
@@ -557,17 +562,20 @@ CK_FN void ck_blur(int x, int y, CK_BPARAMS b, CK_G const float* src, CK_G float
 // the brightness of the lighter side, so bright-to-dark transitions (where real
 // glass fringes) pass the threshold first.
 // ---------------------------------------------------------------------------
-CK_FN void ck_contrast(int x, int y, CK_PARAMS p, CK_G const float* luma, CK_G const float* lumaBlur,
-                       CK_G float* mask)
+CK_FN float ck_contrast_value(float l, float lb, float low, float high)
 {
-    const int i = y * p->srcWidth + x;
-    const float l = luma[i];
-    const float lb = lumaBlur[i];
     // Tone-compressed luma reaches 1.0 at diffuse white and 1.5 at extreme highlights,
     // so HDR sources keep passing the threshold after diffuse edges have dropped out.
     const float light = ck_fmaxf(l, lb);
     const float e = 1.4f * ck_fabsf(l - lb) * (0.15f + 0.85f * light * light);
-    mask[i] = ck_smooth(p->maskLow, p->maskHigh, e);
+    return ck_smooth(low, high, e);
+}
+
+CK_FN void ck_contrast(int x, int y, CK_PARAMS p, CK_G const float* luma, CK_G const float* lumaBlur,
+                       CK_G float* mask)
+{
+    const int i = y * p->srcWidth + x;
+    mask[i] = ck_contrast_value(luma[i], lumaBlur[i], p->maskLow, p->maskHigh);
 }
 
 // ---------------------------------------------------------------------------
