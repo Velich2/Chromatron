@@ -30,6 +30,8 @@
 #include <string>
 #include <functional>
 #include <future>
+#include <thread>
+#include <chrono>
 #include <vector>
 
 using namespace chromatron;
@@ -950,6 +952,34 @@ void testCuda()
     if (!cudaUsable()) {
         std::printf("[skip] no CUDA device this build can run on\n");
         return;
+    }
+    // A pinned source permits a genuinely asynchronous H2D copy. With work
+    // already queued on the stream, upload must still return with the copy done.
+    {
+        cudaStream_t stream = nullptr;
+        void* host = nullptr;
+        void* device = nullptr;
+        const auto delay = [](void*) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); };
+        const bool ready = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) == cudaSuccess &&
+                           cudaMallocHost(&host, sizeof(float)) == cudaSuccess &&
+                           cudaMalloc(&device, sizeof(float)) == cudaSuccess &&
+                           cudaLaunchHostFunc(stream, delay, nullptr) == cudaSuccess;
+        expect(ready, "CUDA upload lifetime test setup");
+        if (ready) {
+            try {
+                *static_cast<float*>(host) = 0.375f;
+                auto backend = makeCudaBackend(stream);
+                backend->upload(host, device, sizeof(float));
+                expect(cudaStreamQuery(stream) == cudaSuccess, "CUDA upload completes before its pinned source can be released");
+            } catch (const std::exception& error) {
+                std::printf("%s\n", error.what());
+                expect(false, "CUDA upload lifetime test");
+            }
+        }
+        if (stream) cudaStreamSynchronize(stream);
+        if (device) cudaFree(device);
+        if (host) cudaFreeHost(host);
+        if (stream) cudaStreamDestroy(stream);
     }
     for (int run = 0; run < 6; ++run) {
         Frame f;

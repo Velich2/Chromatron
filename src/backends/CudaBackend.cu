@@ -13,6 +13,11 @@ namespace chromatron {
 
 namespace {
 
+__global__ void k_store_params(CKParams value, CKParams* device)
+{
+    *device = value;
+}
+
 __global__ void k_import(const CKParams* p, const float* src, float* work)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -139,6 +144,7 @@ public:
     void upload(const void* host, void* buffer, size_t bytes) override
     {
         check(cudaMemcpyAsync(buffer, host, bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync");
+        finish();  // Backend::upload lets callers release host storage on return.
     }
 
 private:
@@ -147,8 +153,10 @@ private:
         if (params_ && std::memcmp(&value, &paramsValue_, sizeof(value)) == 0) return params_;
         if (!params_) check(cudaMallocAsync(reinterpret_cast<void**>(&params_), sizeof(value), stream_),
                             "cudaMallocAsync (parameters)");
-        check(cudaMemcpyAsync(params_, &value, sizeof(value), cudaMemcpyHostToDevice, stream_),
-              "cudaMemcpyAsync (parameters)");
+        // CUDA copies by-value launch arguments before returning. The render plan
+        // may go out of scope while the host's stream is still processing the frame.
+        k_store_params<<<1, 1, 0, stream_>>>(value, params_);
+        check(cudaGetLastError(), "k_store_params");
         paramsValue_ = value;
         return params_;
     }
