@@ -37,7 +37,8 @@ Pipelines pipelinesFor(id<MTLDevice> device)
 
     NSError* error = nil;
     MTLCompileOptions* options = [MTLCompileOptions new];
-    options.fastMathEnabled = YES;
+    // Gradient edge selection is sensitive to reassociation of luma probes.
+    options.fastMathEnabled = NO;
     id<MTLLibrary> library = [device newLibraryWithSource:@(kChromatronMetalSource) options:options error:&error];
     if (!library)
         throw std::runtime_error(std::string("Metal: library build failed: ") +
