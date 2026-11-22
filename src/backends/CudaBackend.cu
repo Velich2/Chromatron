@@ -19,11 +19,14 @@ __global__ void k_import(CKParams p, const float* src, float* work)
     if (x < p.srcWidth && y < p.srcHeight) ck_import(x, y, &p, src, work);
 }
 
-__global__ void k_luma(CKParams p, const float* work, float* luma)
+__global__ void k_luma(int width, int height, float red, float green, float blue, const float* work, float* luma)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_luma(x, y, &p, work, luma);
+    if (x < width && y < height) {
+        const int i = y * width + x;
+        luma[i] = ck_luma_value(red, green, blue, work + 4*i);
+    }
 }
 
 __global__ void k_blur(CKBlurParams b, const float* src, float* dst)
@@ -40,11 +43,14 @@ __global__ void k_downsample(CKBlurParams b, const float* src, float* dst)
     if (x < b.width && y < b.height) ck_downsample(x, y, b, src, dst);
 }
 
-__global__ void k_contrast(CKParams p, const float* luma, const float* lumaBlur, float* mask)
+__global__ void k_contrast(int width, int height, float low, float high, const float* luma, const float* lumaBlur, float* mask)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_contrast(x, y, &p, luma, lumaBlur, mask);
+    if (x < width && y < height) {
+        const int i = y * width + x;
+        mask[i] = ck_contrast_value(luma[i], lumaBlur[i], low, high);
+    }
 }
 
 __global__ void k_gather(CKParams p, const float* L0, const float* L1, const float* L2, const float* L3,
@@ -96,7 +102,7 @@ public:
 
     void luma(const CKParams& p, const void* work, void* luma) override
     {
-        k_luma<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p, F(work), F(luma));
+        k_luma<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p.srcWidth, p.srcHeight, p.lumR, p.lumG, p.lumB, F(work), F(luma));
         check(cudaGetLastError(), "k_luma");
     }
 
@@ -114,7 +120,7 @@ public:
 
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
-        k_contrast<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p, F(luma), F(lumaBlur), F(mask));
+        k_contrast<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p.srcWidth, p.srcHeight, p.maskLow, p.maskHigh, F(luma), F(lumaBlur), F(mask));
         check(cudaGetLastError(), "k_contrast");
     }
 
