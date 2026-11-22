@@ -635,6 +635,16 @@ Plan buildPlan(const Settings& s, const Geometry& g)
     p.falloff = 1.0f;
     p.anaX = p.anaY = 1.0f;
     setupColorSpace(p, s.space);
+    if (isIdentity(s)) {
+        // Use the normal host-format and region mapping, but skip the optical passes.
+        p.mix = 0.0f;
+        p.highlightGain = 1.0f;
+        p.numLevels = 1;
+        p.levelW[0] = p.srcWidth;
+        p.levelH[0] = p.srcHeight;
+        p.levelScale[0] = 1.0f;
+        return plan;
+    }
     const double lum[3] = {p.lumR, p.lumG, p.lumB};
 
     std::vector<Tap> taps;

@@ -743,9 +743,13 @@ CK_FN float ck_palette_progress(CK_PARAMS p, CK_G const float* src, float fx, fl
     for (int iteration = 0; iteration < 6; ++iteration) {
         const float mid = (lo+hi)*0.5f;
         const float y = ck_palette_luma(p,src,fx,fy,dx,dy,scale,mid);
-        if ((y < threshold-0.000001f) == ascending) lo=mid; else hi=mid;
+        if ((y < threshold-0.000001f) == ascending) {lo=mid; yl=y;}
+        else {hi=mid; yh=y;}
     }
-    const float edge = (lo+hi)*0.5f;
+    // Interpolate the crossing inside the final bracket so adjacent brackets
+    // do not introduce a jump when CPU and GPU round a probe differently.
+    const float fraction = yl == yh ? 0.5f : ck_clampf((threshold-yl)/(yh-yl),0.0f,1.0f);
+    const float edge = lo + fraction*(hi-lo);
     const float span = edge < 0.0f ? -p->paletteMinT : p->paletteMaxT;
     const float t = ck_clampf(ck_fabsf(edge)/ck_fmaxf(0.00001f,span),0.0f,1.0f);
     return t;
