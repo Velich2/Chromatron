@@ -5,6 +5,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -12,18 +13,23 @@ namespace chromatron {
 
 namespace {
 
-__global__ void k_import(CKParams p, const float* src, float* work)
+__global__ void k_store_params(CKParams value, CKParams* device)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_import(x, y, &p, src, work);
+    *device = value;
 }
 
-__global__ void k_luma(CKParams p, const float* work, float* luma)
+__global__ void k_import(const CKParams* p, const float* src, float* work)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_luma(x, y, &p, work, luma);
+    if (x < p->srcWidth && y < p->srcHeight) ck_import(x, y, p, src, work);
+}
+
+__global__ void k_luma(const CKParams* p, const float* work, float* luma)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < p->srcWidth && y < p->srcHeight) ck_luma(x, y, p, work, luma);
 }
 
 __global__ void k_blur(CKBlurParams b, const float* src, float* dst)
@@ -40,20 +46,20 @@ __global__ void k_downsample(CKBlurParams b, const float* src, float* dst)
     if (x < b.width && y < b.height) ck_downsample(x, y, b, src, dst);
 }
 
-__global__ void k_contrast(CKParams p, const float* luma, const float* lumaBlur, float* mask)
+__global__ void k_contrast(const CKParams* p, const float* luma, const float* lumaBlur, float* mask)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.srcWidth && y < p.srcHeight) ck_contrast(x, y, &p, luma, lumaBlur, mask);
+    if (x < p->srcWidth && y < p->srcHeight) ck_contrast(x, y, p, luma, lumaBlur, mask);
 }
 
-__global__ void k_gather(CKParams p, const float* L0, const float* L1, const float* L2, const float* L3,
+__global__ void k_gather(const CKParams* p, const float* L0, const float* L1, const float* L2, const float* L3,
                          const float* L4, const float* L5, const float* L6, const float* L7, const float* mask,
                          float* dst)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < p.dstWidth && y < p.dstHeight) ck_gather(x, y, &p, L0, L1, L2, L3, L4, L5, L6, L7, mask, dst);
+    if (x < p->dstWidth && y < p->dstHeight) ck_gather(x, y, p, L0, L1, L2, L3, L4, L5, L6, L7, mask, dst);
 }
 
 void check(cudaError_t err, const char* what)
@@ -70,6 +76,7 @@ public:
 
     ~CudaBackend() override
     {
+        if (params_) cudaFreeAsync(params_, stream_);
         if (owned_) {
             cudaStreamSynchronize(stream_);
             cudaStreamDestroy(stream_);
@@ -90,13 +97,13 @@ public:
 
     void import(const CKParams& p, const void* src, void* work) override
     {
-        k_import<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p, F(src), F(work));
+        k_import<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(params(p), F(src), F(work));
         check(cudaGetLastError(), "k_import");
     }
 
     void luma(const CKParams& p, const void* work, void* luma) override
     {
-        k_luma<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p, F(work), F(luma));
+        k_luma<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(params(p), F(work), F(luma));
         check(cudaGetLastError(), "k_luma");
     }
 
@@ -114,14 +121,14 @@ public:
 
     void contrast(const CKParams& p, const void* luma, const void* lumaBlur, void* mask) override
     {
-        k_contrast<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(p, F(luma), F(lumaBlur), F(mask));
+        k_contrast<<<grid(p.srcWidth, p.srcHeight), block(), 0, stream_>>>(params(p), F(luma), F(lumaBlur), F(mask));
         check(cudaGetLastError(), "k_contrast");
     }
 
     void gather(const CKParams& p, const void* const levels[CK_MAX_LEVELS], const void* mask, void* dst) override
     {
         k_gather<<<grid(p.dstWidth, p.dstHeight), block(), 0, stream_>>>(
-            p, F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(levels[4]), F(levels[5]), F(levels[6]),
+            params(p), F(levels[0]), F(levels[1]), F(levels[2]), F(levels[3]), F(levels[4]), F(levels[5]), F(levels[6]),
             F(levels[7]), F(mask), F(dst));
         check(cudaGetLastError(), "k_gather");
     }
@@ -137,15 +144,30 @@ public:
     void upload(const void* host, void* buffer, size_t bytes) override
     {
         check(cudaMemcpyAsync(buffer, host, bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync");
-        finish();
+        finish();  // Backend::upload lets callers release host storage on return.
     }
 
 private:
+    const CKParams* params(const CKParams& value)
+    {
+        if (params_ && std::memcmp(&value, &paramsValue_, sizeof(value)) == 0) return params_;
+        if (!params_) check(cudaMallocAsync(reinterpret_cast<void**>(&params_), sizeof(value), stream_),
+                            "cudaMallocAsync (parameters)");
+        // CUDA copies by-value launch arguments before returning. The render plan
+        // may go out of scope while the host's stream is still processing the frame.
+        k_store_params<<<1, 1, 0, stream_>>>(value, params_);
+        check(cudaGetLastError(), "k_store_params");
+        paramsValue_ = value;
+        return params_;
+    }
+
     static dim3 block() { return dim3(16, 16); }
     static dim3 grid(int w, int h) { return dim3((unsigned)(w + 15) / 16, (unsigned)(h + 15) / 16); }
 
     cudaStream_t stream_;
     bool owned_;
+    CKParams* params_ = nullptr;
+    CKParams paramsValue_ = {};
 };
 
 }  // namespace
