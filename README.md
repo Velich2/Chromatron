@@ -21,7 +21,7 @@ close the host and copy them:
 
 Nuke also scans the shared OFX folders listed for Resolve. Keep one visible copy of the bundle.
 The OFX archives include `INSTALL.md`, `NUKE.md` and the Nuke `smoke.py` test script.
-Windows also has a dedicated `Chromatron-1.4.0-Nuke-Windows.zip` download with Nuke setup instructions
+Windows also has a dedicated `Chromatron-1.4.1-Nuke-Windows.zip` download with Nuke setup instructions
 and the same fixed binary as the Windows OFX archive. Replace an older shared copy when upgrading.
 
 The effect appears in the **Chromatron** category. The After Effects / Premiere plug-in for macOS is not
@@ -154,9 +154,12 @@ dispersion colour, not flat coloured areas; image luminance and alpha are preser
 
 Choose a preset to populate its colour controls. Editing a colour, Gradient or a transition position
 switches to **Custom**, retaining the other selected colours. **Color A** and **Color B** are the first
-colours; **Color A End** and **Color B End** are enabled with Gradient. Premiere hides inactive colour
-rows; After Effects keeps them visible and disabled. Gradients run from the first colour
-near the object edge toward the End colour outward. Pure axial defocus uses the halo coverage instead
+colours; **Color A End** and **Color B End** are enabled with Gradient. Cobalt / Amber, Glacier /
+Vermilion, Steel / Copper and Deep Blue / Saffron start as solid pairs. Turning on Gradient fills in
+lighter end colours and switches the palette to **Custom** for further editing. Premiere hides inactive
+colour rows; After Effects keeps them visible and disabled. Gradients run once across the fringe, from
+the first colour on the darker side of an edge to the End colour on the lighter side. Pure axial defocus
+uses the halo coverage instead
 of a shifted edge. The preset endpoints are display-sRGB values and are carried into the working
 primaries for ACES and wide-gamut footage; they are not a promise of exact output pixel values.
 

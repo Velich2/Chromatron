@@ -29,8 +29,8 @@ using namespace chromatron::ae;
 
 namespace {
 
-// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 4, 0, PF_Stage_RELEASE, 3) = 656899.
-constexpr int kMajor = 1, kMinor = 4, kBug = 0, kBuild = 3;
+// Must match AE_Effect_Version in ChromatronAE_PiPL.r: PF_VERSION(1, 4, 1, PF_Stage_RELEASE, 1) = 658945.
+constexpr int kMajor = 1, kMinor = 4, kBug = 1, kBuild = 1;
 #if defined(CHROMATRON_VERSION_MAJOR)
 static_assert(kMajor == CHROMATRON_VERSION_MAJOR && kMinor == CHROMATRON_VERSION_MINOR &&
                   kBug == CHROMATRON_VERSION_PATCH,
@@ -238,9 +238,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
                  "Original|Cobalt / Amber|Glacier / Vermilion|Steel / Copper|Deep Blue / Saffron|Vintage Glass|Coated Glass|Custom|Lens Coating", ID_PALETTE);
     AEFX_CLR_STRUCT(def);
     PF_ADD_POPUP("Color Pair", 4, dflt::kPair, "Red / Cyan|Green / Magenta|Blue / Yellow|Red / Blue (green fixed)", ID_PAIR);
-    AEFX_CLR_STRUCT(def);
-    def.flags = PF_ParamFlag_SUPERVISE;
-    PF_ADD_CHECKBOXX("Gradient", FALSE, 0, ID_GRADIENT);
+    PF_ADD_CHECKBOXX("Gradient", FALSE, PF_ParamFlag_SUPERVISE, ID_GRADIENT);
     AEFX_CLR_STRUCT(def);
     def.flags = PF_ParamFlag_SUPERVISE;
     PF_ADD_COLOR("Color A", 53, 95, 211, ID_COLOR_A);
@@ -253,15 +251,11 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out)
     AEFX_CLR_STRUCT(def);
     def.flags = PF_ParamFlag_SUPERVISE;
     PF_ADD_COLOR("Color B End", 226, 171, 67, ID_COLOR_B_END);
-    AEFX_CLR_STRUCT(def);
-    def.flags = PF_ParamFlag_SUPERVISE;
-    PF_ADD_FLOAT_SLIDERX("Color A Transition", 5, 95, 5, 95, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIDPOINT_A);
-    AEFX_CLR_STRUCT(def);
-    def.flags = PF_ParamFlag_SUPERVISE;
-    PF_ADD_FLOAT_SLIDERX("Color B Transition", 5, 95, 5, 95, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT, 0, ID_MIDPOINT_B);
-    AEFX_CLR_STRUCT(def);
-    def.flags = PF_ParamFlag_SUPERVISE;
-    PF_ADD_CHECKBOXX("Use Color B Middle", FALSE, 0, ID_USE_B_MIDDLE);
+    PF_ADD_FLOAT_SLIDERX("Color A Transition", 5, 95, 5, 95, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT,
+                         PF_ParamFlag_SUPERVISE, ID_MIDPOINT_A);
+    PF_ADD_FLOAT_SLIDERX("Color B Transition", 5, 95, 5, 95, 50, PF_Precision_TENTHS, PF_ValueDisplayFlag_PERCENT,
+                         PF_ParamFlag_SUPERVISE, ID_MIDPOINT_B);
+    PF_ADD_CHECKBOXX("Use Color B Middle", FALSE, PF_ParamFlag_SUPERVISE, ID_USE_B_MIDDLE);
     AEFX_CLR_STRUCT(def);
     def.flags = PF_ParamFlag_SUPERVISE;
     PF_ADD_COLOR("Color B Middle", 140, 148, 89, ID_COLOR_B_MIDDLE);
@@ -388,10 +382,11 @@ PF_Err UserChangedParam(PF_InData* in, PF_OutData* out, PF_ParamDef* params[], c
     const int index = extra->param_index;
     const bool colorEdit = IsFringeColor(index) || index == P_MIDPOINT_A || index == P_MIDPOINT_B ||
                            index == P_GRADIENT || index == P_USE_B_MIDDLE;
+    const auto palette = static_cast<cx::FringePalette>(std::clamp(
+        (int)params[P_PALETTE]->u.pd.value-1, 0, cx::kFringePaletteCount-1));
+    const bool namedPreset = palette != cx::FringePalette::Original && palette != cx::FringePalette::Custom;
     if (index == P_PALETTE) {
-        const auto palette = static_cast<cx::FringePalette>(std::clamp(
-            (int)params[P_PALETTE]->u.pd.value-1, 0, cx::kFringePaletteCount-1));
-        if (palette != cx::FringePalette::Original && palette != cx::FringePalette::Custom) {
+        if (namedPreset) {
             const auto colors = cx::paletteColors(palette);
             setColor(P_COLOR_A,colors.a); setColor(P_COLOR_B,colors.b);
             setColor(P_COLOR_A_END,colors.aEnd); setColor(P_COLOR_B_END,colors.bEnd);
@@ -405,6 +400,14 @@ PF_Err UserChangedParam(PF_InData* in, PF_OutData* out, PF_ParamDef* params[], c
             changed(P_MIDPOINT_A); changed(P_MIDPOINT_B);
         }
     } else if (colorEdit) {
+        if (index == P_GRADIENT && params[P_GRADIENT]->u.bd.value && namedPreset) {
+            // Older projects can store matching start and end colours for a solid preset.
+            const auto colors = cx::paletteColors(palette);
+            if (!colors.gradient) {
+                setColor(P_COLOR_A_END, colors.aEnd);
+                setColor(P_COLOR_B_END, colors.bEnd);
+            }
+        }
         params[P_PALETTE]->u.pd.value = static_cast<int>(cx::FringePalette::Custom) + 1;
         changed(P_PALETTE);
     }

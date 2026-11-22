@@ -8,8 +8,8 @@ systems still need in-host validation.
 
 ## Installation
 
-On Windows, download `Chromatron-1.4.0-Nuke-Windows.zip`. The dedicated Nuke archive contains the same
-binary as `Chromatron-1.4.0-OFX-Windows.zip`, with this Nuke guide as `INSTALL.md` and `smoke.py`.
+On Windows, download `Chromatron-1.4.1-Nuke-Windows.zip`. The dedicated Nuke archive contains the same
+binary as `Chromatron-1.4.1-OFX-Windows.zip`, with this Nuke guide as `INSTALL.md` and `smoke.py`.
 On macOS and Linux, use the OFX archive for your operating system.
 
 Quit Nuke and copy `Chromatron.ofx.bundle` into one OFX directory.

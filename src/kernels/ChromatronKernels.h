@@ -714,10 +714,12 @@ CK_FN float ck_palette_luma(CK_PARAMS p, CK_G const float* src, float fx, float 
         sx = fx - dx*k*p->anaX; sy = fy - dy*k*p->anaY;
     }
     const CKPix v = ck_bilinear(src,p->srcWidth,p->srcHeight,sx,sy);
-    // Quantise only the edge-search probe, not the rendered image. Otherwise
-    // tiny transfer/interpolation differences can change a bisection decision.
-    const float y = ck_tone(p->lumR*v.r + p->lumG*v.g + p->lumB*v.b);
-    return ck_floorf(y*4096.0f+0.5f)*(1.0f/4096.0f);
+    return ck_tone(p->lumR*v.r + p->lumG*v.g + p->lumB*v.b);
+}
+
+CK_FN float ck_palette_probe(float y)
+{
+    return ck_floorf(y*4096.0f+0.5f);
 }
 
 // Locate the nearest high-contrast edge within the existing sampling footprint.
@@ -736,22 +738,25 @@ CK_FN float ck_palette_progress(CK_PARAMS p, CK_G const float* src, float fx, fl
             const float t = extent*(float)step*0.25f;
             const float y = ck_palette_luma(p,src,fx,fy,dx,dy,scale,t);
             const float distance = ck_fabsf((t+previousT)*0.5f/extent);
-            const float score = ck_fabsf(y-previousY)/(0.1f+distance);
-            // Stable ties: tiny CPU/GPU interpolation differences must not choose
-            // opposite edges of a thin line and change its gradient direction.
+            // Quantise edge selection for stable ties on thin lines. Refine the
+            // chosen crossing at full precision so weak edges do not step.
+            const float delta = ck_fabsf(ck_palette_probe(y)-ck_palette_probe(previousY))*(1.0f/4096.0f);
+            const float score = delta/(0.1f+distance);
             if (score > best + ck_fmaxf(0.00001f,best*0.0001f)) {best=score; lo=previousT; hi=t; yl=previousY; yh=y;}
             previousT=t; previousY=y;
         }
     }
-    // Pure axial defocus has no shifted sampling ray. Its halo is strongest near
-    // the source and fades outward, so use coverage for the same dark-to-light ramp.
-    if (best <= 0.0001f) return 0.25f/(0.25f+ck_fabsf(amount));
+    // With no detectable lateral edge, grade an axial halo by its coverage.
+    // Blend into this ramp where the edge is too weak to locate precisely.
+    const float coverage = 0.25f/(0.25f+ck_fabsf(amount));
+    const float confidence = ck_smooth(1.0f/4096.0f,8.0f/4096.0f,ck_fabsf(yh-yl));
+    if (confidence == 0.0f) return coverage;
     const float threshold = (yl+yh)*0.5f;
     const bool ascending = yl < yh;
     for (int iteration = 0; iteration < 6; ++iteration) {
         const float mid = (lo+hi)*0.5f;
         const float y = ck_palette_luma(p,src,fx,fy,dx,dy,scale,mid);
-        if ((y < threshold-0.000001f) == ascending) {lo=mid; yl=y;}
+        if ((y < threshold) == ascending) {lo=mid; yl=y;}
         else {hi=mid; yh=y;}
     }
     // Interpolate the crossing inside the final bracket so adjacent brackets
@@ -759,8 +764,11 @@ CK_FN float ck_palette_progress(CK_PARAMS p, CK_G const float* src, float fx, fl
     const float fraction = yl == yh ? 0.5f : ck_clampf((threshold-yl)/(yh-yl),0.0f,1.0f);
     const float edge = lo + fraction*(hi-lo);
     const float span = edge < 0.0f ? -p->paletteMinT : p->paletteMaxT;
-    const float t = ck_clampf(ck_fabsf(edge)/ck_fmaxf(0.00001f,span),0.0f,1.0f);
-    return t;
+    const float distance = ck_clampf(ck_fabsf(edge)/ck_fmaxf(0.00001f,span),0.0f,1.0f);
+    // An ascending crossing is reached from the darker part of the fringe.
+    // The two halves share one ramp, with one middle colour across the edge.
+    const float directed = 0.5f + (ascending ? -0.5f : 0.5f)*distance;
+    return coverage + confidence*(directed-coverage);
 }
 
 CK_FN void ck_gather(int x, int y, CK_PARAMS p, CK_G const float* L0, CK_G const float* L1,
